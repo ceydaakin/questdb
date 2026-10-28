@@ -371,6 +371,18 @@ public interface IndexWriter extends Closeable, Mutable {
     }
 
     /**
+     * Like {@link #setNextTxnAtSeal}, for paths that tag the upcoming chain
+     * entry with the already-committed table {@code _txn} instead of the
+     * forthcoming one. A reader pinned at that txn may have picked the entry
+     * this publish supersedes, so the seal-purge window recorded for the
+     * superseded files must include it: {@code [prev txnAtSeal, txn + 1)}
+     * rather than {@code [prev txnAtSeal, txn)}.
+     */
+    default void setNextTxnAtSealCommitted(long committedTxn) {
+        setNextTxnAtSeal(committedTxn);
+    }
+
+    /**
      * Installs partition path, column name, columnNameTxn and the upcoming
      * table txn that the next {@link #openFromO3Context} call will consume.
      * Lets the O3 copy path defer the actual {@code of(...)} to the worker

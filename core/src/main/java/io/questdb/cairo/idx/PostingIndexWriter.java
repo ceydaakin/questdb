@@ -235,6 +235,9 @@ public class PostingIndexWriter implements IndexWriter {
     private int activeKeyCount;
     private int[] activeKeyIds = new int[INITIAL_KEY_CAPACITY];
     private int blockCapacity;
+    // pendingTxnAtSeal when it was set via setNextTxnAtSealCommitted, else -1.
+    // recordPostingSealPurge widens the purge window by one txn for such a head.
+    private long committedTxnAtSeal = -1;
     private int coverCount;
     private long[] coveredAuxReadAddrs;
     private long[] coveredAuxReadSizes;
@@ -2100,6 +2103,13 @@ public class PostingIndexWriter implements IndexWriter {
     @Override
     public void setNextTxnAtSeal(long txnAtSeal) {
         this.pendingTxnAtSeal = txnAtSeal;
+        this.committedTxnAtSeal = -1L;
+    }
+
+    @Override
+    public void setNextTxnAtSealCommitted(long committedTxn) {
+        this.pendingTxnAtSeal = committedTxn;
+        this.committedTxnAtSeal = committedTxn;
     }
 
     @Override
@@ -5138,6 +5148,11 @@ public class PostingIndexWriter implements IndexWriter {
         } else {
             long prevTxnAtSeal = chain.getSecondEntryTxnAtSeal(keyMem);
             fromTxn = prevTxnAtSeal >= 0 ? prevTxnAtSeal : postingColumnNameTxn;
+            if (toTxn == committedTxnAtSeal) {
+                // The new head is tagged with an already-committed txn, so a
+                // reader pinned at it may still be on the superseded entry.
+                toTxn++;
+            }
         }
         // pendingTxnAtSeal is intentionally NOT reset here: a single logical
         // TableWriter operation (e.g. sealPostingIndexForPartition) calls

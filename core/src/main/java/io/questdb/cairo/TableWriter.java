@@ -14925,7 +14925,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // partition stays attached and openPartition's
                         // rollbackConditionally evicts orphans on reopen,
                         // so the chain walk is not the recovery path here.
-                        indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn());
+                        // setNextTxnAtSealCommitted keeps a reader pinned at
+                        // getTxn() inside the purge window of a seal that
+                        // commit()'s MAX_GEN_COUNT auto-seal supersedes.
+                        indexer.getWriter().setNextTxnAtSealCommitted(txWriter.getTxn());
                         indexer.getWriter().commit();
                         if (PostingIndexWriter.COVERING_COUNTERS_ENABLED) {
                             PostingIndexWriter.COVERING_FASTLAG_COMMIT_COUNT.incrementAndGet();
@@ -14955,7 +14958,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
                 // Non-covering branch of the WAL fast-lag path. See the
                 // covering branch above for why getTxn() (not getTxn()+1L).
-                indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn());
+                indexer.getWriter().setNextTxnAtSealCommitted(txWriter.getTxn());
                 try {
                     indexer.getWriter().commit();
                 } finally {
