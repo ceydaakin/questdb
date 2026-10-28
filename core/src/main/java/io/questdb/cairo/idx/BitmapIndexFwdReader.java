@@ -244,7 +244,7 @@ public class BitmapIndexFwdReader extends AbstractBitmapIndexReader {
             nc.nullPos = minValue;
             final long hi = maxValue == Long.MAX_VALUE ? Long.MAX_VALUE : maxValue + 1;
             nc.nullCount = Math.min(columnTop, hi);
-            nc.of(key, minValue, maxValue, keyCount);
+            nc.of(key, minValue, maxValue, keyCount, true);
             return nc;
         }
 
@@ -256,7 +256,7 @@ public class BitmapIndexFwdReader extends AbstractBitmapIndexReader {
             } else {
                 c = new Cursor();
             }
-            c.of(key, minValue, maxValue, keyCount);
+            c.of(key, minValue, maxValue, keyCount, true);
             return c;
         }
 
@@ -278,7 +278,7 @@ public class BitmapIndexFwdReader extends AbstractBitmapIndexReader {
             } else {
                 c = new Cursor();
             }
-            c.of(key, minRowId, maxRowId, keyCount);
+            c.of(key, minRowId, maxRowId, keyCount, false);
             return c;
         }
 
@@ -306,6 +306,7 @@ public class BitmapIndexFwdReader extends AbstractBitmapIndexReader {
         private long minValue;
         private long valueBlockOffset;
         private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seekValue;
+        private final BitmapIndexUtils.ValueBlockSeeker COUNT_SEEKER = this::seekValueCount;
 
         @Override
         public void close() {
@@ -383,7 +384,11 @@ public class BitmapIndexFwdReader extends AbstractBitmapIndexReader {
             this.valueBlockOffset = offset;
         }
 
-        void of(int key, long minValue, long maxValue, long keyCount) {
+        private void seekValueCount(long count, long offset) {
+            this.valueCount = count;
+        }
+
+        void of(int key, long minValue, long maxValue, long keyCount, boolean isBoundedByMaxValue) {
             if (keyCount == 0) {
                 valueCount = 0;
             } else {
@@ -420,7 +425,15 @@ public class BitmapIndexFwdReader extends AbstractBitmapIndexReader {
                 }
 
                 valueMem.extend(lastValueBlockOffset + blockCapacity);
-                this.valueCount = valueCount;
+                if (valueCount > 0 && isBoundedByMaxValue) {
+                    // Count only the values at or below maxValue, so the cursor never follows a block
+                    // link past them. Values above maxValue belong to rows the caller cannot see, and
+                    // a writer rollback frees their blocks while this cursor is still open.
+                    BitmapIndexUtils.seekValueBlockRTL(valueCount, lastValueBlockOffset, valueMem, maxValue, blockValueCountMod, COUNT_SEEKER);
+                    valueCount = this.valueCount;
+                } else {
+                    this.valueCount = valueCount;
+                }
                 if (valueCount > 0) {
                     BitmapIndexUtils.seekValueBlockLTR(valueCount, valueBlockOffset, valueMem, minValue, blockValueCountMod, SEEKER);
                 } else {

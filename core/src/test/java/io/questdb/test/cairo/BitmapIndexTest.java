@@ -1099,6 +1099,44 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testForwardCursorAfterRollbackAndWriterClose() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            create(configuration, path.trimTo(plen), "x", 2);
+            try (
+                    BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE);
+                    BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)
+            ) {
+                // committed: key 0 holds rows 0..3 in two blocks, key 1 holds row 4
+                writer.add(0, 0);
+                writer.add(0, 1);
+                writer.add(0, 2);
+                writer.add(0, 3);
+                writer.add(1, 4);
+                writer.setMaxValue(4);
+                // rows of a commit still in flight give key 0 a third block
+                writer.add(0, 5);
+                writer.add(0, 6);
+
+                RowCursor cursor = reader.getCursor(0, 0, 4);
+                LongList rows = new LongList();
+                for (int i = 0; i < 3; i++) {
+                    Assert.assertTrue(cursor.hasNext());
+                    rows.add(cursor.next());
+                }
+
+                // the commit fails: rollback frees the third block and the writer is replaced
+                writer.rollbackValues(4);
+                writer.close();
+
+                while (cursor.hasNext()) {
+                    rows.add(cursor.next());
+                }
+                Assert.assertEquals("[0,1,2,3]", rows.toString());
+            }
+        });
+    }
+
+    @Test
     public void testForwardCursorTimeout() throws Exception {
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
