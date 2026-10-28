@@ -1111,6 +1111,77 @@ public class LatestByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestByAllIndexedNullInPartitionWithoutColumn() throws Exception {
+        // The latest NULL row sits in a partition written before ADD COLUMN, where the reader
+        // has no index for the column at all, only a stand-in reader.
+        assertMemoryLeak(() -> {
+            for (String wal : new String[]{"BYPASS WAL", "WAL"}) {
+                for (String table : new String[]{"indexed", "plain"}) {
+                    execute("CREATE TABLE " + table + " (v INT, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY " + wal);
+                    execute("INSERT INTO " + table + " VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
+                    execute("ALTER TABLE " + table + " ADD COLUMN s SYMBOL" + (table.equals("indexed") ? " INDEX" : ""));
+                    execute("INSERT INTO " + table + " VALUES (3, '2024-01-02T00:00:00.000000Z', 'y')");
+                }
+                drainWalQueue();
+                final String query = "SELECT v, ts, s FROM %s LATEST ON ts PARTITION BY s ORDER BY ts";
+                final String suffix = getTimestampSuffix(timestampType.getTypeName());
+                final String expected = "v\tts\ts\n" +
+                        "2\t2024-01-01T01:00:00.000000" + suffix + "\t\n" +
+                        "3\t2024-01-02T00:00:00.000000" + suffix + "\ty\n";
+                for (int parquet = 0; parquet < 2; parquet++) {
+                    if (parquet == 1) {
+                        execute("ALTER TABLE indexed CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                        execute("ALTER TABLE plain CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                        drainWalQueue();
+                    }
+                    assertQuery(String.format(query, "plain")).timestamp("ts").expectSize().returns(expected);
+                    assertQuery(String.format(query, "indexed"))
+                            .timestamp("ts")
+                            .expectSize()
+                            .withPlanContaining("LatestByAllIndexed")
+                            .returns(expected);
+                }
+                execute("DROP TABLE indexed");
+                execute("DROP TABLE plain");
+            }
+        });
+    }
+
+    @Test
+    public void testLatestByAllIndexedNullInPartitionWithoutColumnWithPrefixes() throws Exception {
+        // WITHIN applies after LATEST ON, so NULL's latest row in a partition that predates the
+        // indexed column must pass or fail the geohash filter on its own value.
+        configOverrideUseWithinLatestByOptimisation();
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE pos (v INT, g GEOHASH(4c), ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO pos VALUES (1, #46sw, '2024-01-01T00:00:00.000000Z'), (2, #46sx, '2024-01-01T01:00:00.000000Z')");
+            execute("ALTER TABLE pos ADD COLUMN s SYMBOL INDEX");
+            execute("INSERT INTO pos VALUES (3, #46sw, '2024-01-02T00:00:00.000000Z', 'y')");
+            final String suffix = getTimestampSuffix(timestampType.getTypeName());
+            final String query = "SELECT v, g, ts, s FROM pos WHERE g WITHIN(%s) LATEST ON ts PARTITION BY s";
+            final String nullRow = "2\t46sx\t2024-01-01T01:00:00.000000" + suffix + "\t\n";
+            final String yRow = "3\t46sw\t2024-01-02T00:00:00.000000" + suffix + "\ty\n";
+            assertQuery(String.format(query, "#46s"))
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlanContaining("LatestByAllIndexed")
+                    .returns("v\tg\tts\ts\n" + nullRow + yRow);
+            assertQuery(String.format(query, "#46sx"))
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlanContaining("LatestByAllIndexed")
+                    .returns("v\tg\tts\ts\n" + nullRow);
+            // NULL's latest row is v=2, which #46sw rejects; v=1 must not stand in for it.
+            assertQuery(String.format(query, "#46sw"))
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlanContaining("LatestByAllIndexed")
+                    .returns("v\tg\tts\ts\n" + yRow);
+        });
+        engine.getSqlCompilerPool().releaseAll();
+    }
+
+    @Test
     public void testLatestByAllIndexedWithPrefixes() throws Exception {
         configOverrideUseWithinLatestByOptimisation();
 

@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.idx.IndexBwdNullReader;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.PageFrame;
@@ -49,6 +50,7 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.Os;
 import io.questdb.std.Rows;
 import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.tasks.LatestByTask;
 import org.jetbrains.annotations.NotNull;
@@ -230,6 +232,8 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
 
         int queuedCount = 0;
         long foundRowCount = 0;
+        // Once NULL has a latest row, frames without the column have nothing left to contribute.
+        boolean isNullKeyFound = false;
         try {
             // First, build address cache as we'll be publishing it to other threads.
             PageFrame frame;
@@ -246,6 +250,19 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                 final IndexReader indexReader = frame.getIndexReader(columnIndex, IndexReader.DIR_BACKWARD);
                 final long indexRowLo = frame.getIndexRowLo();
                 final long indexRowHi = frame.getIndexRowHi() - 1;
+
+                if (indexReader instanceof IndexBwdNullReader) {
+                    // The partition predates the column, so TableReader installs a stand-in reader with
+                    // no index memory, and the native scan finds nothing in it. Every row of the frame
+                    // is NULL, which makes the frame's last row NULL's latest row.
+                    if (!isNullKeyFound && findNullKeyInFrameWithoutColumn(frameIndex, indexRowLo, indexRowHi, geoHashColumnIndex, geoHashColumnType, prefixesAddress, prefixesCount)) {
+                        foundRowCount++;
+                    }
+                    // Either this frame found NULL, or an earlier frame already had.
+                    isNullKeyFound = true;
+                    frameIndex++;
+                    continue;
+                }
 
                 final long keyBaseAddress = indexReader.getKeyBaseAddress();
                 final long keysMemorySize = indexReader.getKeyMemorySize();
@@ -376,6 +393,79 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         aLimit = rowCount;
         aIndex = indexShift;
         postProcessRows();
+    }
+
+    /**
+     * Records NULL's latest row for a frame whose partition does not contain the column, the
+     * way {@code latest_scan_backward} and {@code filter_with_prefix} would: the NULL key (0)
+     * always falls into the first task's key range, found keys move to the front of the range
+     * as row ids plus one, and only rows matching a WITHIN prefix count as filtered.
+     */
+    private boolean findNullKeyInFrameWithoutColumn(
+            int frameIndex,
+            long indexRowLo,
+            long indexRowHi,
+            int geoHashColumnIndex,
+            int geoHashColumnType,
+            long prefixesAddress,
+            long prefixesCount
+    ) {
+        final long argsAddress = argumentsAddress;
+        final long keyLo = LatestByArguments.getKeyLo(argsAddress);
+        final long keyHi = LatestByArguments.getKeyHi(argsAddress);
+        final long rowsSize = LatestByArguments.getRowsSize(argsAddress);
+        final long firstNotFound = keyLo + rowsSize;
+        for (long i = firstNotFound; i < keyHi; i++) {
+            if (rows.get(i) == 0) {
+                final long localRowId = indexRowHi - indexRowLo;
+                final long rowId = Rows.toRowID(Rows.MAX_SAFE_PARTITION_INDEX - frameIndex, localRowId) + 1;
+                rows.set(i, rows.get(firstNotFound));
+                rows.set(firstNotFound, rowId);
+                LatestByArguments.setRowsSize(argsAddress, rowsSize + 1);
+                if (geoHashColumnIndex < 0 || prefixesCount == 0) {
+                    LatestByArguments.setFilteredSize(argsAddress, rowsSize + 1);
+                } else if (isWithinPrefix(frameIndex, localRowId, geoHashColumnIndex, geoHashColumnType, prefixesAddress, prefixesCount)) {
+                    final long filteredSize = LatestByArguments.getFilteredSize(argsAddress);
+                    rows.set(keyLo + filteredSize, rowId);
+                    LatestByArguments.setFilteredSize(argsAddress, filteredSize + 1);
+                }
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isWithinPrefix(
+            int frameIndex,
+            long localRowId,
+            int geoHashColumnIndex,
+            int geoHashColumnType,
+            long prefixesAddress,
+            long prefixesCount
+    ) {
+        final long columnAddress = frameMemoryPool.navigateTo(frameIndex).getPageAddress(geoHashColumnIndex);
+        if (columnAddress == 0) {
+            // The geohash column is absent too, so the row's geohash is NULL and matches no prefix.
+            return false;
+        }
+        final int size = 1 << ColumnType.pow2SizeOfBits(ColumnType.getGeoHashBits(geoHashColumnType));
+        final long address = columnAddress + localRowId * size;
+        final long hash = switch (size) {
+            case 1 -> Unsafe.getByte(address);
+            case 2 -> Unsafe.getShort(address);
+            case 4 -> Unsafe.getInt(address);
+            default -> Unsafe.getLong(address);
+        };
+        // filter_with_prefix compares in the column's own width.
+        final long widthMask = size == Long.BYTES ? -1L : (1L << (size * Byte.SIZE)) - 1;
+        for (long i = 0; i < prefixesCount; i += 2) {
+            final long prefix = Unsafe.getLong(prefixesAddress + i * Long.BYTES);
+            final long mask = Unsafe.getLong(prefixesAddress + (i + 1) * Long.BYTES);
+            if ((((hash & mask) ^ prefix) & widthMask) == 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void postProcessRows() {
