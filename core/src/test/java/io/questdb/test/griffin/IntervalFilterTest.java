@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
@@ -751,6 +752,44 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("a\tts\n");
+        });
+    }
+
+    @Test
+    public void testInIntervalTimezoneRepeatsLastHourOfDay() throws Exception {
+        // America/Santiago turned its clocks back from 00:00 (UTC-3) to 23:00 (UTC-4)
+        // on 2024-04-07, so local 2024-04-06T23:30 happened at 02:30 and at 03:30 UTC
+        assertMemoryLeak(() -> {
+            final String type = timestampType.getTypeName();
+            execute("CREATE TABLE s (k INT, tm " + type + ", ts " + type + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO s VALUES
+                        (1, '2024-04-07T02:30:00.000000Z', '2024-04-07T02:30:00.000000Z'),
+                        (2, '2024-04-07T03:30:00.000000Z', '2024-04-07T03:30:00.000000Z'),
+                        (3, '2024-04-07T04:30:00.000000Z', '2024-04-07T04:30:00.000000Z')
+                    """);
+            final String both = """
+                    k
+                    1
+                    2
+                    """;
+            assertQuery("SELECT k FROM s WHERE ts IN '2024-04-06@America/Santiago'").noLeakCheck().returns(both);
+            assertQuery("SELECT k FROM s WHERE tm IN '2024-04-06@America/Santiago'").noLeakCheck().returns(both);
+            assertQuery("SELECT k FROM s WHERE ts IN '2024-04-06T23@America/Santiago'").noLeakCheck().returns(both);
+            assertQuery("SELECT k FROM s WHERE ts IN '2024-04-07@America/Santiago'").noLeakCheck().returns("k\n3\n");
+            assertQuery("SELECT k FROM s WHERE ts IN '2024-04-[05..07]@America/Santiago'")
+                    .noLeakCheck()
+                    .returns(both + "3\n");
+            assertQuery("SELECT k FROM s WHERE tm IN '2024-04-[05..07]@America/Santiago'")
+                    .noLeakCheck()
+                    .returns(both + "3\n");
+
+            setCurrentMicros(MicrosTimestampDriver.floor("2024-04-06T12:00:00.000000Z"));
+            assertQuery("SELECT k FROM s WHERE ts IN '$today@America/Santiago'").noLeakCheck().returns(both);
+            assertQuery("SELECT k FROM s WHERE tm IN '$today@America/Santiago'").noLeakCheck().returns(both);
+            assertQuery("SELECT k FROM s WHERE ts IN '$yesterday..$tomorrow@America/Santiago'")
+                    .noLeakCheck()
+                    .returns(both + "3\n");
         });
     }
 

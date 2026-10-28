@@ -5578,6 +5578,63 @@ public class TickExprTest {
     }
 
     @Test
+    public void testTimezoneDstOverlapAtEndOfDay() throws SqlException {
+        // America/Santiago turned its clocks back from 00:00 (UTC-3) to 23:00 (UTC-4)
+        // on 2024-04-07, so local 2024-04-06T23:00-23:59 happened at 02:00-02:59 UTC
+        // and again at 03:00-03:59 UTC. The day ends after the second pass.
+        assertBracketInterval(
+                "[{lo=2024-04-06T03:00:00.000000Z, hi=2024-04-07T03:59:59.999999Z}]",
+                "2024-04-06@America/Santiago"
+        );
+        assertBracketInterval(
+                "[{lo=2024-04-07T02:00:00.000000Z, hi=2024-04-07T03:59:59.999999Z}]",
+                "2024-04-06T23@America/Santiago"
+        );
+        assertBracketInterval(
+                "[{lo=2024-04-05T03:00:00.000000Z, hi=2024-04-08T03:59:59.999999Z}]",
+                "2024-04-[05..07]@America/Santiago"
+        );
+        assertBracketIntervalWithNow(
+                "[{lo=2024-04-06T03:00:00.000000Z, hi=2024-04-07T03:59:59.999999Z}]",
+                "$today@America/Santiago",
+                "2024-04-06T12:00:00.000000Z"
+        );
+        // Asia/Beirut turned its clocks back from 00:00 (UTC+3) to 23:00 (UTC+2) on 2024-10-27
+        assertBracketInterval(
+                "[{lo=2024-10-25T21:00:00.000000Z, hi=2024-10-26T21:59:59.999999Z}]",
+                "2024-10-26@Asia/Beirut"
+        );
+        // Only part of the repeated hour: the end keeps the first pass,
+        // so the interval does not cover local times it does not name
+        assertBracketInterval(
+                "[{lo=2024-04-07T02:00:00.000000Z, hi=2024-04-07T02:29:59.999999Z}]",
+                "2024-04-06T23:00@America/Santiago;30m"
+        );
+        assertBracketInterval(
+                "[{lo=2024-04-07T02:30:00.000000Z, hi=2024-04-07T02:59:59.999999Z}]",
+                "2024-04-06T23:30@America/Santiago;30m"
+        );
+    }
+
+    @Test
+    public void testTimezoneDstOverlapAtEndOfDayCompiled() throws SqlException {
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final String expression = "$today@America/Santiago";
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                timestampDriver, configuration, expression, 0, expression.length(), 0)) {
+            out.clear();
+            compiled.evaluate(out, timestampDriver.parseFloorLiteral("2024-04-06T12:00:00.000000Z"));
+            final String expected = "[{lo=2024-04-06T03:00:00.000000Z, hi=2024-04-07T03:59:59.999999Z}]";
+            TestUtils.assertEquals(
+                    ColumnType.isTimestampNano(timestampType.getTimestampType())
+                            ? expected.replace("00Z", "00000Z").replace("99Z", "99999Z")
+                            : expected,
+                    intervalToString(timestampDriver, out)
+            );
+        }
+    }
+
+    @Test
     public void testTimezoneDstOverlapFallBack() throws SqlException {
         // Test DST overlap (fall back) - Nov 3, 2024 in America/New_York
         // At 2:00 AM EDT, clocks fall back to 1:00 AM EST

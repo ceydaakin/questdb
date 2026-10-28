@@ -305,8 +305,9 @@ public class CompiledTickExpression extends UntypedFunction {
                     }
                 }
 
-                out.setQuick(i, timestampDriver.toUTC(adjustedLo, tzRules));
-                out.setQuick(i + 1, timestampDriver.toUTC(adjustedHi, tzRules));
+                long utcLo = timestampDriver.toUTC(adjustedLo, tzRules);
+                out.setQuick(i, utcLo);
+                out.setQuick(i + 1, IntervalUtils.toUTCIntervalHi(timestampDriver, tzRules, utcLo, adjustedHi));
             }
         }
     }

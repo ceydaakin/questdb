@@ -1812,8 +1812,9 @@ public final class IntervalUtils {
                         }
                     }
 
-                    out.setQuick(i, timestampDriver.toUTC(adjustedLo, tzRules));
-                    out.setQuick(i + 1, timestampDriver.toUTC(adjustedHi, tzRules));
+                    long utcLo = timestampDriver.toUTC(adjustedLo, tzRules);
+                    out.setQuick(i, utcLo);
+                    out.setQuick(i + 1, toUTCIntervalHi(timestampDriver, tzRules, utcLo, adjustedHi));
                 }
             }
         } catch (NumericException e) {
@@ -4735,6 +4736,25 @@ public final class IntervalUtils {
 
     static long resolveDurationLo(long anchor, long endExclusive) {
         return endExclusive >= anchor ? anchor : endExclusive;
+    }
+
+    /**
+     * Converts the inclusive local end of an interval to UTC. {@code toUTC()} resolves
+     * a local time that a fall-back transition repeats to its first pass. When the end
+     * is the last instant of the repeated range and the interval starts at or before
+     * that range, this method returns the end of the second pass instead, so the
+     * interval covers both passes and nothing else.
+     */
+    static long toUTCIntervalHi(TimestampDriver timestampDriver, TimeZoneRules tzRules, long utcLo, long localHi) {
+        final long utcHi = timestampDriver.toUTC(localHi, tzRules);
+        final long transition = tzRules.getNextDST(utcHi);
+        if (transition == utcHi + 1) {
+            final long overlap = tzRules.getOffset(utcHi) - tzRules.getOffset(transition);
+            if (overlap > 0 && utcLo <= transition - overlap) {
+                return utcHi + overlap;
+            }
+        }
+        return utcHi;
     }
 
     /**
