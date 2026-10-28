@@ -596,6 +596,10 @@ public final class WhereClauseParser implements Mutable {
     private static long parseTokenAsTimestamp(TimestampDriver timestampDriver, ExpressionNode lo) throws SqlException {
         try {
             if (!isNullKeyword(lo.token)) {
+                final long epoch = parseUnquotedEpoch(lo.token);
+                if (epoch != Numbers.LONG_NULL) {
+                    return epoch;
+                }
                 return timestampDriver.parseQuotedLiteral(lo.token);
             }
             return Numbers.LONG_NULL;
@@ -606,6 +610,21 @@ public final class WhereClauseParser implements Mutable {
                 throw SqlException.invalidDate(lo.position);
             }
         }
+    }
+
+    /**
+     * Reads an unquoted integer constant as an epoch value in the timestamp column's unit, as a
+     * row filter does. Quoted-text parsing would drop its first and last digits: 202406 would
+     * become the year 0240. Returns {@link Numbers#LONG_NULL} for anything else.
+     */
+    private static long parseUnquotedEpoch(CharSequence token) {
+        if (!Chars.isQuoted(token)) {
+            try {
+                return Numbers.parseLong(token);
+            } catch (NumericException ignore) {
+            }
+        }
+        return Numbers.LONG_NULL;
     }
 
     /**
@@ -1010,7 +1029,12 @@ public final class WhereClauseParser implements Mutable {
                         node.intrinsicValue = IntrinsicModel.FALSE;
                         return false;
                     }
-                    model.intersectTimestamp(b.token, 1, b.token.length() - 1, b.position);
+                    final long epoch = parseUnquotedEpoch(b.token);
+                    if (epoch != Numbers.LONG_NULL) {
+                        model.intersectTimestamp(epoch);
+                    } else {
+                        model.intersectTimestamp(b.token, 1, b.token.length() - 1, b.position);
+                    }
                     node.intrinsicValue = IntrinsicModel.TRUE;
                     return true;
                 }
@@ -1253,7 +1277,14 @@ public final class WhereClauseParser implements Mutable {
                             model.subtractIntervals(Numbers.LONG_NULL, Numbers.LONG_NULL);
                         }
                     } else {
-                        if (!isNegated) {
+                        final long epoch = parseUnquotedEpoch(inArg.token);
+                        if (epoch != Numbers.LONG_NULL) {
+                            if (!isNegated) {
+                                model.intersectTimestamp(epoch);
+                            } else {
+                                model.subtractIntervals(epoch, epoch);
+                            }
+                        } else if (!isNegated) {
                             model.intersectIntervals(inArg.token, 1, inArg.token.length() - 1, inArg.position);
                         } else {
                             model.subtractIntervals(inArg.token, 1, inArg.token.length() - 1, inArg.position);
@@ -1943,7 +1974,12 @@ public final class WhereClauseParser implements Mutable {
                         node.intrinsicValue = IntrinsicModel.FALSE;
                         return false;
                     }
-                    model.subtractIntervals(b.token, 1, b.token.length() - 1, b.position);
+                    final long epoch = parseUnquotedEpoch(b.token);
+                    if (epoch != Numbers.LONG_NULL) {
+                        model.subtractIntervals(epoch, epoch);
+                    } else {
+                        model.subtractIntervals(b.token, 1, b.token.length() - 1, b.position);
+                    }
                     node.intrinsicValue = IntrinsicModel.TRUE;
                     return true;
                 }
@@ -3025,7 +3061,14 @@ public final class WhereClauseParser implements Mutable {
                     }
                 } else {
                     // Constant string - treat as interval (e.g., '2018-01-01' spans full day)
-                    if (leftFirst) {
+                    final long epoch = parseUnquotedEpoch(inArg.token);
+                    if (epoch != Numbers.LONG_NULL) {
+                        if (leftFirst) {
+                            model.intersectTimestamp(epoch);
+                        } else {
+                            model.unionIntervals(epoch, epoch);
+                        }
+                    } else if (leftFirst) {
                         model.intersectIntervals(inArg.token, 1, inArg.token.length() - 1, inArg.position);
                     } else {
                         model.unionIntervals(inArg.token, 1, inArg.token.length() - 1, inArg.position);
@@ -3342,10 +3385,12 @@ public final class WhereClauseParser implements Mutable {
             ExpressionNode node,
             boolean isLo
     ) throws NumericException {
-        long ts;
+        long ts = parseUnquotedEpoch(node.token);
         try {
             // Timestamp string
-            ts = timestampDriver.parseQuotedLiteral(node.token);
+            if (ts == Numbers.LONG_NULL) {
+                ts = timestampDriver.parseQuotedLiteral(node.token);
+            }
         } catch (NumericException e) {
             try {
                 // Timestamp epoch (long)

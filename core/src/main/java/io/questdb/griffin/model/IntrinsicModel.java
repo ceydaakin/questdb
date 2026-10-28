@@ -148,6 +148,13 @@ public class IntrinsicModel implements Mutable {
         }
     }
 
+    public void intersectTimestamp(long timestamp) {
+        runtimeIntervalBuilder.intersect(timestamp, timestamp);
+        if (runtimeIntervalBuilder.isEmptySet()) {
+            intrinsicValue = FALSE;
+        }
+    }
+
     public void intersectTimestamp(CharSequence seq, int lo, int lim, int position) throws SqlException {
         runtimeIntervalBuilder.intersectTimestamp(seq, lo, lim, position);
         if (runtimeIntervalBuilder.isEmptySet()) {

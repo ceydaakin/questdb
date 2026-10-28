@@ -1165,4 +1165,45 @@ public class IntervalFilterTest extends AbstractCairoTest {
                             """, timestampType.getTypeName()));
         });
     }
+
+    @Test
+    public void testUnquotedIntegerIsEpochValue() throws Exception {
+        // the designated timestamp must read an unquoted integer as the row filter on tm does,
+        // not drop its first and last digits as if it were quoted text (202406 -> year 0240);
+        // the predicates spell the integers without underscores, which is the form that hits it
+        assertMemoryLeak(() -> {
+            final String type = timestampType.getTypeName();
+            execute("CREATE TABLE z (k INT, tm " + type + ", ts " + type + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO z VALUES " +
+                    "(1, 202_406::" + type + ", 202_406::" + type + "), " +
+                    "(2, 500_000::" + type + ", 500_000::" + type + "), " +
+                    "(3, '2024-06-15T00:00:00.000000Z', '2024-06-15T00:00:00.000000Z')");
+
+            final String[][] cases = {
+                    {"= 202406", "k\n1\n"},
+                    {"IN 202406", "k\n1\n"},
+                    {"NOT IN 202406", "k\n2\n3\n"},
+                    {"!= 202406", "k\n2\n3\n"},
+                    {"> 202406", "k\n2\n3\n"},
+                    {"<= 202406", "k\n1\n"},
+                    {"BETWEEN 100000 AND 300000", "k\n1\n"},
+                    {"= 500000", "k\n2\n"},
+                    {"IN (202406, 500000)", "k\n1\n2\n"},
+                    {"IN 202406 OR ts IN 500000", "k\n1\n2\n"},
+                    {"= 202406 OR ts = 500000", "k\n1\n2\n"},
+            };
+            for (String[] c : cases) {
+                assertQuery("SELECT k FROM z WHERE tm " + c[0].replace("ts ", "tm ")).noLeakCheck().sizeMayVary().returns(c[1]);
+                assertQuery("SELECT k FROM z WHERE ts " + c[0]).noLeakCheck().sizeMayVary().returns(c[1]);
+            }
+            // two different points intersect to the empty set, which the planner short-circuits
+            assertQuery("SELECT k FROM z WHERE ts = 202406 AND ts = 500000")
+                    .noLeakCheck()
+                    .withPlan("""
+                            SelectedRecord
+                                Empty table
+                            """)
+                    .returns("k\n");
+        });
+    }
 }
