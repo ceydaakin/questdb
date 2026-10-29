@@ -3487,6 +3487,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     (includePrevailing ? "INCLUDE PREVAILING " : "EXCLUDE PREVAILING ") +
                     "ORDER BY t.ts")
                     .noLeakCheck()
+                    .noRandomAccess()
                     .returns("""
                             sym\tprice\twindow_price
                             TSLA\t100.0\t40.0
@@ -4045,6 +4046,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     (includePrevailing ? "INCLUDE PREVAILING " : "EXCLUDE PREVAILING ") +
                     "ORDER BY t.ts")
                     .noLeakCheck()
+                    .noRandomAccess()
                     .returns("""
                             price\twindow_price
                             100.0\t60.0
@@ -6872,6 +6874,89 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "                Frame forward scan on: prices\n")
                     .timestamp("ts")
                     .returns(sink);
+        });
+    }
+
+    @Test
+    public void testWindowJoinReportsTimestampAfterAggregate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute("CREATE TABLE prices (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('a', 1, '2024-01-01T09:00:00.000000Z'),
+                        ('a', 2, '2024-01-01T09:01:00.000000Z'),
+                        ('b', 3, '2024-01-01T09:02:00.000000Z');
+                    """);
+            execute("""
+                    INSERT INTO prices VALUES
+                        ('a', 1.0, '2024-01-01T08:59:30.000000Z'),
+                        ('a', 2.0, '2024-01-01T09:00:30.000000Z'),
+                        ('a', 4.0, '2024-01-01T09:00:45.000000Z'),
+                        ('b', 3.0, '2024-01-01T09:01:30.000000Z');
+                    """);
+
+            assertQuery("""
+                    SELECT count() c, t.ts, sum(p.price) s, t.sym
+                    FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym)
+                    RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW EXCLUDE PREVAILING;
+                    """)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            c\tts\ts\tsym
+                            1\t2024-01-01T09:00:00.000000Z\t1.0\ta
+                            2\t2024-01-01T09:01:00.000000Z\t6.0\ta
+                            1\t2024-01-01T09:02:00.000000Z\t3.0\tb
+                            """);
+
+            assertQuery("""
+                    SELECT sum(p.price) s, t.sym, count() c, t.ts
+                    FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym)
+                    RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW EXCLUDE PREVAILING;
+                    """)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            s\tsym\tc\tts
+                            1.0\ta\t1\t2024-01-01T09:00:00.000000Z
+                            6.0\ta\t2\t2024-01-01T09:01:00.000000Z
+                            3.0\tb\t1\t2024-01-01T09:02:00.000000Z
+                            """);
+
+            // the outer ORDER BY must sort rather than trust a LONG column as the timestamp
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT count() c, t.ts, sum(p.price) s, t.sym
+                        FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym)
+                        RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW EXCLUDE PREVAILING
+                    ) ORDER BY c, ts;
+                    """)
+                    .returns("""
+                            c\tts\ts\tsym
+                            1\t2024-01-01T09:00:00.000000Z\t1.0\ta
+                            1\t2024-01-01T09:02:00.000000Z\t3.0\tb
+                            2\t2024-01-01T09:01:00.000000Z\t6.0\ta
+                            """);
+
+            // the optimiser reorders the sub-query columns to match the outer select list
+            assertQuery("""
+                    SELECT q.c, q.ts, t.k
+                    FROM trades t
+                    ASOF JOIN (
+                        SELECT t.ts, count() c, sum(p.price) s, t.sym
+                        FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym)
+                        RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW EXCLUDE PREVAILING
+                    ) q ON (sym);
+                    """)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            c\tts\tk
+                            1\t2024-01-01T09:00:00.000000Z\t1
+                            2\t2024-01-01T09:01:00.000000Z\t2
+                            1\t2024-01-01T09:02:00.000000Z\t3
+                            """);
         });
     }
 

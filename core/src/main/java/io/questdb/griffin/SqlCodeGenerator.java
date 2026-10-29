@@ -7254,7 +7254,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 throw SqlException.position(ast.position).put("WINDOW join cannot reference right table non-aggregate column: ").put(ast.token);
                                             }
                                             if (colIndex == masterMetadata.getTimestampIndex()) {
-                                                timestampIndex = colIndex;
+                                                // the output metadata follows the select list, so use its position
+                                                timestampIndex = j;
                                             }
                                             columnIndex.add(colIndex);
                                         } else {
