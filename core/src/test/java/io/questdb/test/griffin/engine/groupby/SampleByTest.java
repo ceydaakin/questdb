@@ -8163,6 +8163,51 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByFirstLastMonthAndYearStrideKeepOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL INDEX, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('a', 1.0, '2024-01-15T00:00:00Z'),
+                        ('a', 2.0, '2024-02-01T05:00:00Z'),
+                        ('a', 3.0, '2024-02-20T00:00:00Z'),
+                        ('a', 4.0, '2024-03-01T05:00:00Z'),
+                        ('a', 5.0, '2024-03-10T00:00:00Z')""");
+
+            // A FROM expression selects the first/last cursor, a literal FROM the GROUP BY path. Both must keep
+            // WITH OFFSET on every bucket, not only on the first one.
+            final String[][] cases = {
+                    {"1M", "'10:00'", """
+                            ts\tfirst\tlast
+                            2024-01-01T10:00:00.000000Z\t1.0\t2.0
+                            2024-02-01T10:00:00.000000Z\t3.0\t4.0
+                            2024-03-01T10:00:00.000000Z\t5.0\t5.0
+                            """},
+                    {"1M", "'-02:00'", """
+                            ts\tfirst\tlast
+                            2023-12-31T22:00:00.000000Z\t1.0\t1.0
+                            2024-01-31T22:00:00.000000Z\t2.0\t3.0
+                            2024-02-29T22:00:00.000000Z\t4.0\t5.0
+                            """},
+                    {"1y", "'10:00'", """
+                            ts\tfirst\tlast
+                            2024-01-01T10:00:00.000000Z\t1.0\t5.0
+                            """},
+            };
+            for (String[] c : cases) {
+                assertQuery(
+                        "SELECT ts, first(v), last(v) FROM t WHERE s = 'a' SAMPLE BY " + c[0]
+                                + " FROM '1970-01-01'::TIMESTAMP ALIGN TO CALENDAR WITH OFFSET " + c[1]
+                ).withPlanContaining("SampleByFirstLast").timestamp("ts").noRandomAccess().returns(c[2]);
+                assertQuery(
+                        "SELECT ts, first(v), last(v) FROM t WHERE s = 'a' SAMPLE BY " + c[0]
+                                + " FROM '1970-01-01' ALIGN TO CALENDAR WITH OFFSET " + c[1]
+                ).timestamp("ts").expectSize().returns(c[2]);
+            }
+        });
+    }
+
+    @Test
     public void testSampleByFirstLastRecordCursorFactoryInvalidColumns() {
         try {
             GenericRecordMetadata groupByMeta = new GenericRecordMetadata();

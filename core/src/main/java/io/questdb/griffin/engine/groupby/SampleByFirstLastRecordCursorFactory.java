@@ -417,12 +417,12 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
 
         public long getNextTimestamp() {
             long lastTimestampLocUtc = localEpoch - tzOffset;
-            long nextLastTimestampLoc = timestampSampler.nextTimestamp(localEpoch);
+            long nextLastTimestampLoc = nextBucketStart(localEpoch);
             if (nextLastTimestampLoc - tzOffset >= nextDstUtc) {
                 tzOffset = rules.getOffset(nextLastTimestampLoc - tzOffset);
                 nextDstUtc = rules.getNextDST(nextLastTimestampLoc - tzOffset);
                 while (nextLastTimestampLoc - tzOffset <= lastTimestampLocUtc) {
-                    nextLastTimestampLoc = timestampSampler.nextTimestamp(nextLastTimestampLoc);
+                    nextLastTimestampLoc = nextBucketStart(nextLastTimestampLoc);
                 }
             }
             localEpoch = nextLastTimestampLoc;
@@ -717,6 +717,16 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             }
 
             return false;
+        }
+
+        // startFrom() rounds on a grid shifted back by WITH OFFSET, so stepping happens on that grid too. Month and
+        // year samplers rebuild the next bucket start from its calendar fields and drop any time of day they did not
+        // set themselves, so stepping from an offset bucket start would lose the offset after the first bucket.
+        private long nextBucketStart(long localBucketStart) {
+            if (fixedOffset != Long.MIN_VALUE) {
+                return timestampSampler.nextTimestamp(localBucketStart - fixedOffset) + fixedOffset;
+            }
+            return timestampSampler.nextTimestamp(localBucketStart);
         }
 
         private void saveFirstLastValuesToCrossFrameRowBuffer() {
