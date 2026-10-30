@@ -16793,6 +16793,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             iw.setMaxValue(partitionRowCount - 1);
             iw.seal();
+            // seal() does not flush a BITMAP index, and the caller publishes the
+            // converted partition in a durable _txn: flush the rebuilt files first.
+            final int commitMode = getFlushCommitMode();
+            if (CommitMode.appliesColumnSync(commitMode)) {
+                iw.sync(commitMode == CommitMode.ASYNC);
+            }
         } finally {
             // munmap first: Misc.free(iw) can throw out of close().
             if (dataAddr != 0) {
