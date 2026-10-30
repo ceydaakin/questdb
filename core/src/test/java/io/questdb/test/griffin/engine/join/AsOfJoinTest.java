@@ -3991,7 +3991,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     3\t2000-01-01T00:00:01.000000%1$s\t\t
                     1\t2000-01-01T00:00:02.000000%1$s\t1\t2000-01-01T00:00:02.000000%2$s
                     2\t2000-01-01T00:00:03.000000%1$s\t2\t2000-01-01T00:00:03.000000%2$s
-                    4\t2000-01-01T00:00:04.000000%1$s\t\t
+                    4\t2000-01-01T00:00:04.000000%1$s\t4\t2000-01-01T00:00:01.000000%2$s
                     """, leftSuffix, rightSuffix);
             assertQuery(query)
                     .noRandomAccess()
@@ -6143,7 +6143,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     3\t2000-01-01T00:00:01.000000Z\t\t
                     1\t2000-01-01T00:00:02.000000Z\t1\t2000-01-01T00:00:02.000000Z
                     2\t2000-01-01T00:00:03.000000Z\t2\t2000-01-01T00:00:03.000000Z
-                    4\t2000-01-01T00:00:04.000000Z\t\t
+                    4\t2000-01-01T00:00:04.000000Z\t4\t2000-01-01T00:00:01.000000Z
                     """, leftTableTimestampType.getTypeName());
             assertQuery(query)
                     .noRandomAccess()

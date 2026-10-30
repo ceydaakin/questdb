@@ -333,8 +333,13 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
         }
 
         private void masterRecordLeads() {
-            // lookup previous slave
-            final long rowid = joinKeyMap.valueAt(masterKeyValueAddress).getLong(hasSlave ? VAL_SLAVE_PREV : VAL_SLAVE_NEXT);
+            // The latest slave row of this key prevails, unless it is the pending slave row,
+            // which is later than the master row. Then the one before it prevails.
+            final MapValue value = joinKeyMap.valueAt(masterKeyValueAddress);
+            long rowid = value.getLong(VAL_SLAVE_NEXT);
+            if (hasSlave && rowid == slaveRecord.getRowId()) {
+                rowid = value.getLong(VAL_SLAVE_PREV);
+            }
             if (rowid == NULL_ROWID) {
                 record.of(masterRecord, nullSlaveRecord);
             } else {
@@ -358,8 +363,13 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
         }
 
         private void slaveRecordLeads() {
-            // lookup previous master
-            final long rowid = joinKeyMap.valueAt(slaveKeyValueAddress).getLong(hasMaster ? VAL_MASTER_PREV : VAL_MASTER_NEXT);
+            // The latest master row of this key prevails, unless it is the pending master row,
+            // which is later than the slave row. Then the one before it prevails.
+            final MapValue value = joinKeyMap.valueAt(slaveKeyValueAddress);
+            long rowid = value.getLong(VAL_MASTER_NEXT);
+            if (hasMaster && rowid == masterRecord.getRowId()) {
+                rowid = value.getLong(VAL_MASTER_PREV);
+            }
             if (rowid == NULL_ROWID) {
                 record.of(nullMasterRecord, slaveRecord);
             } else {
