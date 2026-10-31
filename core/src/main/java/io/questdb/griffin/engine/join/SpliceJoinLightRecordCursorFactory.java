@@ -234,8 +234,11 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
         public boolean hasNext() {
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             if (dualRecord) {
+                // the previous call returned the master-led row of an equal-timestamp,
+                // different-key pair; return the slave-led row before fetching further
                 slaveRecordLeads();
                 dualRecord = false;
+                return true;
             }
 
             if (fetchMaster) {
