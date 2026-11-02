@@ -364,6 +364,41 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDroppedTableSequencerPartsRemoved() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            execute("create table " + tableName + " as (" +
+                    "select x, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            TableToken tableToken = engine.verifyTableName(tableName);
+            for (int i = 0; i < 25; i++) {
+                execute("insert into " + tableName + " values (" + i + ", '2022-02-24')");
+            }
+            drainWalQueue();
+
+            assertSeqPartExistence(true, tableToken, 0);
+            assertSeqPartExistence(true, tableToken, 1);
+            assertSeqPartExistence(true, tableToken, 2);
+
+            execute("drop table " + tableName);
+            drainWalQueue();
+            engine.releaseAllWalWriters();
+
+            // The first pass deletes the sequencer parts, the second one removes the table directory.
+            drainPurgeJob();
+            assertSeqPartExistence(false, tableToken, 0);
+            assertSeqPartExistence(false, tableToken, 1);
+            assertSeqPartExistence(false, tableToken, 2);
+            drainPurgeJob();
+            assertExistence(false, tableToken);
+        });
+    }
+
+    @Test
     public void testGetTableMetadataNpeForDroppedTable() throws Exception {
         // Regression test for a race where WalPurgeJob calls getTableMetadata()
         // for a table that is concurrently dropped. A concurrent drop can close

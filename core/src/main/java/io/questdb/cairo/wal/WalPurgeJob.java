@@ -539,6 +539,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             } finally {
                 txReader.close();
             }
+        } else {
+            // The table is dropped: every sequencer part is purgeable. Without a current part,
+            // logic.run() keeps all parts, and the discovered parts block the table directory removal.
+            logic.trackCurrentSeqPart(Long.MAX_VALUE);
         }
         return false;
         // If table is dropped, all wals can be deleted.
