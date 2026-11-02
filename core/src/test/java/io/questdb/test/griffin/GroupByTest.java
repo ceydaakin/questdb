@@ -4250,6 +4250,58 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeyedVectorizedAvgShortColumnTop() throws Exception {
+        // rows written before ADD COLUMN read a SHORT as 0, so they count in avg()
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k INT, s SYMBOL)");
+            execute("INSERT INTO t VALUES (0, 'a'), (1, 'b')");
+            execute("ALTER TABLE t ADD COLUMN late SHORT");
+            execute("INSERT INTO t VALUES (0, 'a', 6)");
+
+            assertQuery("SELECT k, avg(late), count() FROM t ORDER BY k")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            k\tavg\tcount
+                            0\t3.0\t2
+                            1\t0.0\t1
+                            """);
+            assertQuery("SELECT s, avg(late), count() FROM t ORDER BY s")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            s\tavg\tcount
+                            a\t3.0\t2
+                            b\t0.0\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testKeyedVectorizedAvgShortColumnTopHourKey() throws Exception {
+        // older partitions have no file for the SHORT column, their rows read as 0
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1, '2024-01-01T01:00:00.000000Z'),
+                    (2, '2024-01-01T02:00:00.000000Z')""");
+            execute("ALTER TABLE t ADD COLUMN late SHORT");
+            execute("INSERT INTO t VALUES (3, '2024-01-02T01:00:00.000000Z', 6)");
+
+            assertQuery("SELECT hour(ts) h, avg(late), count() FROM t ORDER BY h")
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("vectorized: true")
+                    .returns("""
+                            h\tavg\tcount
+                            1\t3.0\t2
+                            2\t0.0\t1
+                            """);
+        });
+    }
+
+    @Test
     public void testNonKeyedVectorizedColumnTops() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
