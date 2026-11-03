@@ -140,9 +140,7 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
             // operation through the legacy non-WAL writer pool (getWriterOrPublishCommand), which mints
             // no replicated sequencer txn for a WAL table, so on a demoting node the change is
             // acknowledged but never replicated -- a silent acked-loss. Re-check read-only before
-            // enqueuing so a demote that flipped the flag refuses cleanly instead. (Separately, a WAL
-            // UPDATE should never reach this non-WAL fallback at all; that pre-existing,
-            // role-switch-independent robustness gap is left for a dedicated fix.)
+            // enqueuing so a demote that flipped the flag refuses cleanly instead.
             //
             // The eager check below is a fast-refuse optimization; the authoritative re-check runs
             // under the role-switch READ lock, mirroring applyFenced. Holding the read lock around the
@@ -154,6 +152,14 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
             // applyFenced (see isWriteRefused).
             if (isWriteRefused(forceWalBypass)) {
                 throw CairoException.readOnlyAccess();
+            }
+            // On a WAL table, the busy writer is a WalWriter: every pooled one is in use. The fallback
+            // below would apply the operation through the TableWriter with no sequencer txn, so the
+            // table metadata diverges from the sequencer's and the next WAL apply suspends the table
+            // (#8160). Refuse with the retryable "table busy" error instead. The force/WAL-bypass path
+            // already targets the TableWriter, so it keeps the fallback.
+            if (tableToken.isWal() && !forceWalBypass) {
+                throw busyException;
             }
             // Both-trees pre-externalization fire-point for the async-enqueue fallback, mirroring the
             // inline-apply path above: fire the shared role-switch mint observer before acquiring the

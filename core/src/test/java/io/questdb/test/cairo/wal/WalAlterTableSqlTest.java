@@ -24,11 +24,20 @@
 
 package io.questdb.test.cairo.wal;
 
+import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.OperationFuture;
+import io.questdb.cairo.wal.WalWriter;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.mp.SCSequence;
 import io.questdb.std.Files;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -365,6 +374,58 @@ public class WalAlterTableSqlTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterWithAllWalWritersInUse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE w (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO w VALUES (1, '2024-01-01')");
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("w");
+
+            // hold every pooled WAL writer of the table, as long-lived ingest connections do
+            final ObjList<WalWriter> walWriters = holdAllWalWriters(tableToken);
+            try {
+                // the TableWriter is idle, but the ALTER must not be applied outside the WAL
+                executeAsync("ALTER TABLE w ADD COLUMN b INT");
+                Assert.fail("ALTER must be refused while no WAL writer is free");
+            } catch (EntryUnavailableException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "table busy");
+            } finally {
+                Misc.freeObjList(walWriters);
+            }
+
+            execute("INSERT INTO w (a, ts) VALUES (2, '2024-01-02')");
+            drainWalQueue();
+
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertQuery("SELECT * FROM w")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            a\tts
+                            1\t2024-01-01T00:00:00.000000Z
+                            2\t2024-01-02T00:00:00.000000Z
+                            """);
+
+            // the client can retry once a WAL writer is free
+            execute("ALTER TABLE w ADD COLUMN b INT");
+            execute("INSERT INTO w VALUES (3, '2024-01-03', 3)");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertQuery("SELECT * FROM w")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            a\tts\tb
+                            1\t2024-01-01T00:00:00.000000Z\tnull
+                            2\t2024-01-02T00:00:00.000000Z\tnull
+                            3\t2024-01-03T00:00:00.000000Z\t3
+                            """);
+        });
+    }
+
+    @Test
     public void testDropNonExistingPartition() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
@@ -451,6 +512,37 @@ public class WalAlterTableSqlTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testUpdateWithAllWalWritersInUse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE w (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO w VALUES (1, '2024-01-01')");
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("w");
+
+            final ObjList<WalWriter> walWriters = holdAllWalWriters(tableToken);
+            try {
+                // the TableWriter is idle, but the UPDATE must not be applied outside the WAL
+                executeAsync("UPDATE w SET a = 2");
+                Assert.fail("UPDATE must be refused while no WAL writer is free");
+            } catch (EntryUnavailableException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "table busy");
+            } finally {
+                Misc.freeObjList(walWriters);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT * FROM w")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            a\tts
+                            1\t2024-01-01T00:00:00.000000Z
+                            """);
+        });
+    }
+
     private void createWalAndDropPartitionsWithWhere(String tableName, int day, long expectedTxn, String expected) throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -477,5 +569,25 @@ public class WalAlterTableSqlTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .returns(expected);
         });
+    }
+
+    private void executeAsync(String sql) throws SqlException {
+        try (
+                SqlCompiler compiler = engine.getSqlCompiler();
+                OperationFuture future = compiler.compile(sql, sqlExecutionContext).execute(new SCSequence())
+        ) {
+            future.await();
+        }
+    }
+
+    private ObjList<WalWriter> holdAllWalWriters(TableToken tableToken) {
+        final ObjList<WalWriter> walWriters = new ObjList<>();
+        try {
+            while (true) {
+                walWriters.add(engine.getWalWriter(tableToken));
+            }
+        } catch (EntryUnavailableException ignore) {
+            return walWriters;
+        }
     }
 }
