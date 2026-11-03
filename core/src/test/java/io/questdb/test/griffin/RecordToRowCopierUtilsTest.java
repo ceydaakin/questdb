@@ -1026,6 +1026,89 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testVarcharToLong256() throws Exception {
+        // VARCHAR -> LONG256 must parse like STRING -> LONG256: optional 0x prefix, strict hex
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE src (id INT, s STRING, v VARCHAR)");
+            execute("""
+                    INSERT INTO src VALUES
+                    (1, '0x01', '0x01'),
+                    (2, '0X0a', '0X0a'),
+                    (3, '12', '12'),
+                    (4, 'abc', 'abc'),
+                    (5, '2bd806c97f0e00af1a1fc3328fa763a9269723c8db8fac4f93af71db186d6e90', '2bd806c97f0e00af1a1fc3328fa763a9269723c8db8fac4f93af71db186d6e90'),
+                    (6, '', ''),
+                    (7, NULL, NULL)
+                    """);
+            for (int copierType : COPIER_TYPES) {
+                setCopierType(copierType);
+                execute("CREATE TABLE dst_s (id INT, l LONG256)");
+                execute("CREATE TABLE dst_v (id INT, l LONG256)");
+                execute("INSERT INTO dst_s SELECT id, s FROM src");
+                execute("INSERT INTO dst_v SELECT id, v FROM src");
+                assertQuery("SELECT id, l, l IS NULL AS is_null FROM dst_v").expectSize().noLeakCheck().returns("""
+                        id\tl\tis_null
+                        1\t0x01\tfalse
+                        2\t0x0a\tfalse
+                        3\t0x12\tfalse
+                        4\t0x0abc\tfalse
+                        5\t0x2bd806c97f0e00af1a1fc3328fa763a9269723c8db8fac4f93af71db186d6e90\tfalse
+                        6\t\ttrue
+                        7\t\ttrue
+                        """);
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, "dst_s", "dst_v", LOG);
+                execute("DROP TABLE dst_s");
+                execute("DROP TABLE dst_v");
+            }
+        });
+    }
+
+    @Test
+    public void testVarcharToLong256Chunked() throws Exception {
+        // a lands in the first chunk method of the copier and b in the last one.
+        assertMemoryLeak(() -> {
+            setCopierType(RecordToRowCopierUtils.COPIER_TYPE_CHUNKED);
+            final String pads = chunkingPadColumns();
+            execute("CREATE TABLE src (a VARCHAR" + pads + ", b VARCHAR)");
+            execute("CREATE TABLE dst (a LONG256" + pads + ", b LONG256)");
+            assertChunkedCopier("src", "dst");
+            execute("INSERT INTO src (a, b) VALUES ('abc', '0x01'), ('12', NULL)");
+            execute("INSERT INTO dst SELECT * FROM src");
+            assertQuery("SELECT a, b FROM dst").expectSize().noLeakCheck().returns("""
+                    a\tb
+                    0x0abc\t0x01
+                    0x12\t
+                    """);
+        });
+    }
+
+    @Test
+    public void testVarcharToLong256Malformed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE src (v VARCHAR)");
+            for (String value : new String[]{"u33d", "zz", "0x", "0xzz", "0x0g"}) {
+                execute("TRUNCATE TABLE src");
+                execute("INSERT INTO src VALUES ('" + value + "')");
+                for (int copierType : COPIER_TYPES) {
+                    setCopierType(copierType);
+                    execute("CREATE TABLE dst (l LONG256)");
+                    try {
+                        execute("INSERT INTO dst SELECT v FROM src");
+                        Assert.fail("expected LONG256 conversion failure for " + value);
+                    } catch (ImplicitCastException e) {
+                        TestUtils.assertEquals(
+                                "inconvertible value: `" + value + "` [VARCHAR -> LONG256]",
+                                e.getFlyweightMessage()
+                        );
+                    }
+                    assertQuery("SELECT count(*) FROM dst").expectSize().noRandomAccess().noLeakCheck().returns("count\n0\n");
+                    execute("DROP TABLE dst");
+                }
+            }
+        });
+    }
+
     private static @NotNull Record getLongRecord(int fromType, long value) {
         return new Record() {
             @Override

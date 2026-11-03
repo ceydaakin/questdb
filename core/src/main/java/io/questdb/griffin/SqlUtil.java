@@ -1730,6 +1730,18 @@ public class SqlUtil {
         return Numbers.LONG_NULL;
     }
 
+    public static Long256Constant implicitCastVarcharAsLong256(@Nullable Utf8Sequence value) {
+        if (value == null) {
+            return Long256NullConstant.INSTANCE;
+        }
+        try {
+            // non-ASCII bytes widen to chars outside the hex range, so the decoder rejects them
+            return implicitCastStrAsLong256(value.asAsciiCharSequence());
+        } catch (ImplicitCastException e) {
+            throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, ColumnType.LONG256);
+        }
+    }
+
     public static short implicitCastVarcharAsShort(@Nullable Utf8Sequence value) {
         try {
             return value != null ? Numbers.parseShort(value) : 0;

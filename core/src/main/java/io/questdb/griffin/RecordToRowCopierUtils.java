@@ -555,7 +555,6 @@ public class RecordToRowCopierUtils {
         int wPutIPv4 = asm.poolInterfaceMethod(TableWriter.Row.class, "putIPv4", "(II)V");
         int wPutLong = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong", "(IJ)V");
         int wPutLong256 = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong256", "(ILio/questdb/std/Long256;)V");
-        int wPutLong256Utf8 = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong256Utf8", "(ILio/questdb/std/str/DirectUtf8Sequence;)V");
         int wPutLong128 = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong128", "(IJJ)V");
         int wPutUuidStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putUuid", "(ILjava/lang/CharSequence;)V");
         int wPutUuidUtf8 = asm.poolInterfaceMethod(TableWriter.Row.class, "putUuidUtf8", "(ILio/questdb/std/str/Utf8Sequence;)V");
@@ -589,6 +588,7 @@ public class RecordToRowCopierUtils {
         int implicitCastUtf8StrAsIPv4 = asm.poolMethod(SqlUtil.class, "implicitCastStrAsIPv4", "(Lio/questdb/std/str/Utf8Sequence;)I");
         int implicitCastStrAsLong = asm.poolMethod(SqlUtil.class, "implicitCastStrAsLong", "(Ljava/lang/CharSequence;)J");
         int implicitCastStrAsLong256 = asm.poolMethod(SqlUtil.class, "implicitCastStrAsLong256", "(Ljava/lang/CharSequence;)Lio/questdb/griffin/engine/functions/constants/Long256Constant;");
+        int implicitCastVarcharAsLong256 = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsLong256", "(Lio/questdb/std/str/Utf8Sequence;)Lio/questdb/griffin/engine/functions/constants/Long256Constant;");
         int implicitCastStrAsDate = asm.poolMethod(SqlUtil.class, "implicitCastStrAsDate", "(Ljava/lang/CharSequence;)J");
         int implicitCastStrAsTimestamp = asm.poolInterfaceMethod(TimestampDriver.class, "implicitCast", "(Ljava/lang/CharSequence;)J");
         int implicitCastSymbolAsTimestamp = asm.poolInterfaceMethod(TimestampDriver.class, "implicitCast", "(Ljava/lang/CharSequence;I)J");
@@ -1425,7 +1425,8 @@ public class RecordToRowCopierUtils {
                                 break;
                             case ColumnType.LONG256:
                                 asm.invokeInterface(rGetVarchar);
-                                asm.invokeInterface(wPutLong256Utf8, 2);
+                                asm.invokeStatic(implicitCastVarcharAsLong256);
+                                asm.invokeInterface(wPutLong256, 2);
                                 break;
                             case ColumnType.DECIMAL8:
                             case ColumnType.DECIMAL16:
@@ -1723,7 +1724,6 @@ public class RecordToRowCopierUtils {
         int wPutIPv4 = asm.poolInterfaceMethod(TableWriter.Row.class, "putIPv4", "(II)V");
         int wPutLong = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong", "(IJ)V");
         int wPutLong256 = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong256", "(ILio/questdb/std/Long256;)V");
-        int wPutLong256Utf8 = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong256Utf8", "(ILio/questdb/std/str/DirectUtf8Sequence;)V");
         int wPutLong128 = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong128", "(IJJ)V");
         int wPutUuidStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putUuid", "(ILjava/lang/CharSequence;)V");
         int wPutUuidUtf8 = asm.poolInterfaceMethod(TableWriter.Row.class, "putUuidUtf8", "(ILio/questdb/std/str/Utf8Sequence;)V");
@@ -1758,6 +1758,7 @@ public class RecordToRowCopierUtils {
         int implicitCastUtf8StrAsIPv4 = asm.poolMethod(SqlUtil.class, "implicitCastStrAsIPv4", "(Lio/questdb/std/str/Utf8Sequence;)I");
         int implicitCastStrAsLong = asm.poolMethod(SqlUtil.class, "implicitCastStrAsLong", "(Ljava/lang/CharSequence;)J");
         int implicitCastStrAsLong256 = asm.poolMethod(SqlUtil.class, "implicitCastStrAsLong256", "(Ljava/lang/CharSequence;)Lio/questdb/griffin/engine/functions/constants/Long256Constant;");
+        int implicitCastVarcharAsLong256 = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsLong256", "(Lio/questdb/std/str/Utf8Sequence;)Lio/questdb/griffin/engine/functions/constants/Long256Constant;");
         int implicitCastStrAsDate = asm.poolMethod(SqlUtil.class, "implicitCastStrAsDate", "(Ljava/lang/CharSequence;)J");
         int implicitCastStrAsTimestamp = asm.poolInterfaceMethod(TimestampDriver.class, "implicitCast", "(Ljava/lang/CharSequence;)J");
         int implicitCastSymbolAsTimestamp = asm.poolInterfaceMethod(TimestampDriver.class, "implicitCast", "(Ljava/lang/CharSequence;I)J");
@@ -2540,7 +2541,8 @@ public class RecordToRowCopierUtils {
                             break;
                         case ColumnType.LONG256:
                             asm.invokeInterface(rGetVarchar);
-                            asm.invokeInterface(wPutLong256Utf8, 2);
+                            asm.invokeStatic(implicitCastVarcharAsLong256);
+                            asm.invokeInterface(wPutLong256, 2);
                             break;
                         case ColumnType.DECIMAL8:
                         case ColumnType.DECIMAL16:

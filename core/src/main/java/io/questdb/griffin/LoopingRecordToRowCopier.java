@@ -560,7 +560,7 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
             case ColumnType.DATE -> RecordToRowCopierUtils.transferVarcharToDateCol(row, toIndex, value);
             case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG ->
                     row.putGeoVarchar(toIndex, value);
-            case ColumnType.LONG256 -> row.putLong256Utf8(toIndex, value);
+            case ColumnType.LONG256 -> row.putLong256(toIndex, SqlUtil.implicitCastVarcharAsLong256(value));
             case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
                  ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> row.putDecimalVarchar(toIndex, value);
             default -> throw new IllegalStateException("Unexpected value: " + toTypeTag);
