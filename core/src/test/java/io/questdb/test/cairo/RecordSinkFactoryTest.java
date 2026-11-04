@@ -81,6 +81,57 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnKeysArrayOfEveryDimensionality() {
+        // An encoded array type with 3 or more dimensions does not fit in a short,
+        // the operand range of sipush, so every sink kind must still hand the full
+        // type to Record.getArray().
+        for (int sinkType : SINK_TYPES) {
+            final ArrayColumnTypes columnTypes = new ArrayColumnTypes();
+            final ListColumnFilter columnFilter = new ListColumnFilter();
+            final IntList expectedGetIndexes = new IntList();
+            final IntList expectedGetTypes = new IntList();
+            final IntList expectedPutTypes = new IntList();
+            // enough columns for the chunked generator to split the copy across methods
+            for (int i = 0; i < 500; i++) {
+                columnTypes.add(ColumnType.INT);
+                columnFilter.add(i + 1);
+                expectedGetIndexes.add(i);
+                expectedGetTypes.add(ColumnType.INT);
+                expectedPutTypes.add(ColumnType.INT);
+            }
+            for (int nDims = 1; nDims <= ColumnType.ARRAY_NDIMS_LIMIT; nDims++) {
+                final int arrayType = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims);
+                final int index = columnTypes.getColumnCount();
+                columnTypes.add(arrayType);
+                columnFilter.add(index + 1);
+                expectedGetIndexes.add(index);
+                expectedGetTypes.add(arrayType);
+                // TestRecord.getArray() returns null
+                expectedPutTypes.add(ColumnType.NULL);
+            }
+
+            final RecordSink sink = RecordSinkFactory.getInstance(
+                    copierConfiguration(sinkType),
+                    new BytecodeAssembler(),
+                    columnTypes,
+                    columnFilter,
+                    null,
+                    null,
+                    null,
+                    null
+            );
+            assertSinkKind(sink, sinkType);
+
+            final TestRecord testRecord = new TestRecord();
+            final TestRecordSink testRecordSink = new TestRecordSink();
+            sink.copy(testRecord, testRecordSink);
+            Assert.assertEquals(expectedGetIndexes, testRecord.recordedIndexes);
+            Assert.assertEquals(expectedGetTypes, testRecord.recordedTypes);
+            Assert.assertEquals(expectedPutTypes, testRecordSink.recordedTypes);
+        }
+    }
+
+    @Test
     public void testColumnKeysSkewIndex() {
         ArrayColumnTypes columnTypes = allArrayColumnTypes();
         int skew = 42;
@@ -1785,6 +1836,13 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         final IntList recordedTypes = new IntList();
 
         @Override
+        public ArrayView getArray(int col, int columnType) {
+            recordedIndexes.add(col);
+            recordedTypes.add(columnType);
+            return null;
+        }
+
+        @Override
         public BinarySequence getBin(int col) {
             recordedIndexes.add(col);
             recordedTypes.add(ColumnType.BINARY);
@@ -1991,7 +2049,7 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
 
         @Override
         public void putArray(ArrayView view) {
-            recordedTypes.add(view.getType());
+            recordedTypes.add(view == null ? ColumnType.NULL : view.getType());
         }
 
         @Override

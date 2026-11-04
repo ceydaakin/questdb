@@ -26,6 +26,7 @@ package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DerivedArrayView;
@@ -2662,6 +2663,43 @@ public class ArrayTest extends AbstractCairoTest {
                             [[1.0,2.0],[3.0,4.0],[5.0,6.0]]\t1
                             null\t1
                             """);
+        });
+    }
+
+    @Test
+    public void testGroupByArrayKeyAllDimensionalities() throws Exception {
+        // An encoded array type with 3 or more dimensions does not fit in a short,
+        // the operand range of the sipush the generated key sinks used to emit.
+        assertMemoryLeak(() -> {
+            for (int sinkType : new int[]{
+                    RecordSinkFactory.SINK_TYPE_SINGLE_METHOD,
+                    RecordSinkFactory.SINK_TYPE_CHUNKED,
+                    RecordSinkFactory.SINK_TYPE_LOOPING
+            }) {
+                setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, sinkType);
+                for (int nDims = 1; nDims <= ColumnType.ARRAY_NDIMS_LIMIT; nDims++) {
+                    final String brackets = "[".repeat(nDims);
+                    final String closing = "]".repeat(nDims);
+                    final String literalA = "ARRAY" + brackets + "1.0, 2.0" + closing;
+                    final String literalB = "ARRAY" + brackets + "3.0, 4.0" + closing;
+                    final String textA = brackets + "1.0,2.0" + closing;
+                    final String textB = brackets + "3.0,4.0" + closing;
+
+                    execute("CREATE TABLE td (a DOUBLE" + "[]".repeat(nDims) + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+                    execute("INSERT INTO td VALUES (" + literalA + ", 0::TIMESTAMP), (" + literalB + ", 1::TIMESTAMP), ("
+                            + literalA + ", 2::TIMESTAMP), (NULL, 3::TIMESTAMP)");
+
+                    assertQuery("SELECT a, count() FROM td GROUP BY a")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("a\tcount\n" + textA + "\t2\n" + textB + "\t1\nnull\t1\n");
+                    assertQuery("SELECT DISTINCT a FROM td")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("a\n" + textA + "\n" + textB + "\nnull\n");
+                    execute("DROP TABLE td");
+                }
+            }
         });
     }
 

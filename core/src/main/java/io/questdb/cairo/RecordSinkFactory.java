@@ -32,6 +32,7 @@ import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -661,8 +662,8 @@ public class RecordSinkFactory {
                 // 1+1+2+1+3+1+5+5 = 19 bytes
                     19;
             case ColumnType.ARRAY ->
-                // aload + aload + iconst + iconst(type) + invokeInterface x2
-                // 1+1+2+3+5+5 = 17 bytes (extra iconst for array type)
+                // aload + aload + iconst + ldc(type) + invokeInterface x2
+                // 1+1+2+3+5+5 = 17 bytes (ldc for array type, at most 3 bytes)
                     17;
             case ColumnType.NULL ->
                 // No bytecode generated
@@ -876,6 +877,7 @@ public class RecordSinkFactory {
             }
         }
 
+        final IntIntHashMap arrayTypeConstIndexes = poolArrayTypes(asm, columnFilter, columnTypes);
         var r = poolDecimalFields(asm, thisClassIndex, columnFilter, columnTypes, keyFunctions);
         int decimal128FieldIndex = Numbers.decodeLowInt(r);
         int decimal128ClassIndex = -1;
@@ -1450,7 +1452,7 @@ public class RecordSinkFactory {
                         asm.aload(2);
                         asm.aload(1);
                         asm.iconst(skewedIdx);
-                        asm.iconst(type * factor);
+                        asm.ldc(arrayTypeConstIndexes.get(type));
                         asm.invokeInterface(rGetArray, 2);
                         asm.invokeInterface(wPutArray, 1);
                         break;
@@ -1672,6 +1674,7 @@ public class RecordSinkFactory {
             }
         }
 
+        final IntIntHashMap arrayTypeConstIndexes = poolArrayTypes(asm, columnFilter, columnTypes);
         var r = poolDecimalFields(asm, thisClassIndex, columnFilter, columnTypes, keyFunctions);
         int decimal128FieldIndex = Numbers.decodeLowInt(r);
         int decimal128ClassIndex = -1;
@@ -1929,7 +1932,7 @@ public class RecordSinkFactory {
                     asm.aload(2);
                     asm.aload(1);
                     asm.iconst(getSkewedIndex(index, skewIndex));
-                    asm.iconst(type * factor);
+                    asm.ldc(arrayTypeConstIndexes.get(type));
                     asm.invokeInterface(rGetArray, 2);
                     asm.invokeInterface(wPutArray, 1);
                     break;
@@ -2331,6 +2334,32 @@ public class RecordSinkFactory {
             return src;
         }
         return skewIndex.getQuick(src);
+    }
+
+    /**
+     * Pools each distinct ARRAY column type as an int constant. An encoded array type
+     * with 3 or more dimensions exceeds the short range of sipush, so the generated
+     * code loads it with ldc instead.
+     *
+     * @return pool index of the int constant for each ARRAY column type
+     */
+    private static IntIntHashMap poolArrayTypes(
+            BytecodeAssembler asm,
+            ColumnFilter columnFilter,
+            ColumnTypes columnTypes
+    ) {
+        final IntIntHashMap constIndexes = new IntIntHashMap();
+        for (int i = 0, n = columnFilter.getColumnCount(); i < n; i++) {
+            int index = columnFilter.getColumnIndex(i);
+            final int factor = columnFilter.getIndexFactor(index);
+            index = (index * factor - 1);
+            final int type = columnTypes.getColumnType(index);
+            if (factor > 0 && ColumnType.tagOf(type) == ColumnType.ARRAY && constIndexes.keyIndex(type) > -1) {
+                constIndexes.put(type, asm.getPoolCount());
+                asm.poolIntConst(type);
+            }
+        }
+        return constIndexes;
     }
 
     /**
