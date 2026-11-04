@@ -4666,19 +4666,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (SqlUtil.isTimestampFloorFunction(ast)) {
                     continue;
                 }
-                // Non-aggregate FUNCTION/OPERATION used as a grouping key (e.g.
-                // interval(lo, hi), concat(a, b), cast(x AS STRING), a || b).
-                if ((ast.type == ExpressionNode.FUNCTION || ast.type == ExpressionNode.OPERATION)
-                        && !functionParser.getFunctionFactoryCache().isGroupBy(ast.token)) {
+                // Any other non-aggregate expression is a grouping key (e.g.
+                // interval(lo, hi), concat(a, b), cast(x AS STRING), a || b, and
+                // `col IN 'value'`, which parses as a SET_OPERATION node).
+                if (ast.type != ExpressionNode.FUNCTION
+                        || !functionParser.getFunctionFactoryCache().isGroupBy(ast.token)) {
                     assert qc.getAlias() != null
                             && SqlUtil.getColumnIndexQuiet(groupByMetadata, qc.getAlias()) >= 0
                             && SqlUtil.getColumnIndexQuiet(groupByMetadata, qc.getAlias()) != timestampIndex
-                            : "generateFill: non-aggregate FUNCTION/OPERATION in bottomUpCols must resolve to a non-timestamp factory key";
+                            : "generateFill: non-aggregate expression in bottomUpCols must resolve to a non-timestamp factory key";
                     continue;
                 }
-                assert ast.type == ExpressionNode.FUNCTION
-                        && functionParser.getFunctionFactoryCache().isGroupBy(ast.token)
-                        : "generateFill aggregate arm: expected aggregate FUNCTION, got type=" + ast.type + " token=" + ast.token;
                 // Aggregate column. Always advances userFillIdx so subsequent aggregates
                 // land on the correct slot, even when outer projection drops this column.
                 final CharSequence qcAlias = qc.getAlias();

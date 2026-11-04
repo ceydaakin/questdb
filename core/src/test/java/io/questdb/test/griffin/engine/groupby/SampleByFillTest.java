@@ -578,6 +578,57 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillInSingleValueKeyMatchesValueList() throws Exception {
+        // An unparenthesised `col IN 'value'` parses as a SET_OPERATION node, not
+        // a FUNCTION or OPERATION. generateFill() must still treat it as a key, so
+        // every fill mode returns what the `col IN ('value')` spelling returns.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k INT, t TIMESTAMP, s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                        (1, '2024-01-06T01:00:00.000000Z', 'a', '2024-01-06T00:10:00.000000Z'),
+                        (2, '2024-01-07T01:00:00.000000Z', 'b', '2024-01-06T02:10:00.000000Z')""");
+            final String[][] keys = {
+                    {"t IN '2024-01-06'", "t IN ('2024-01-06')"},
+                    {"s IN 'a'", "s IN ('a')"},
+            };
+            final String[] fills = {"NULL", "PREV", "LINEAR", "NULL, 0", "PREV, 0"};
+            for (String[] key : keys) {
+                for (String fill : fills) {
+                    final String keyFirst = "SELECT ts, %s b, count() c, sum(k) sk FROM x SAMPLE BY 1h FILL(" + fill + ")";
+                    assertSqlCursors(keyFirst.formatted(key[1]), keyFirst.formatted(key[0]));
+                    final String keyLast = "SELECT ts, count() c, sum(k) sk, %s b FROM x SAMPLE BY 1h FILL(" + fill + ")";
+                    assertSqlCursors(keyLast.formatted(key[1]), keyLast.formatted(key[0]));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFillInSingleValueKeyPrev() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k INT, t TIMESTAMP, s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                        (1, '2024-01-06T01:00:00.000000Z', 'a', '2024-01-06T00:10:00.000000Z'),
+                        (2, '2024-01-07T01:00:00.000000Z', 'b', '2024-01-06T02:10:00.000000Z')""");
+            assertQuery("SELECT ts, t IN '2024-01-06' b, count() FROM x SAMPLE BY 1h FILL(PREV)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tb\tcount
+                            2024-01-06T00:00:00.000000Z\ttrue\t1
+                            2024-01-06T00:00:00.000000Z\tfalse\tnull
+                            2024-01-06T01:00:00.000000Z\ttrue\t1
+                            2024-01-06T01:00:00.000000Z\tfalse\tnull
+                            2024-01-06T02:00:00.000000Z\tfalse\t1
+                            2024-01-06T02:00:00.000000Z\ttrue\t1
+                            """);
+        });
+    }
+
+    @Test
     public void testFillInsufficientFillValues() throws Exception {
         assertMemoryLeak(() -> {
             // With 7 aggregates and only 5 fill specs, the query must be rejected
