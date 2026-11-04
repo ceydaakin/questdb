@@ -57,6 +57,11 @@ public final class IntervalUtils {
     public static final int PERIOD_COUNT_INDEX = 3;
     public static final int STATIC_LONGS_PER_DYNAMIC_INTERVAL = 4;
 
+    // expandBracketsRecursive() result flags
+    // the expansion turned a month-level date followed by a time or duration into one interval per day
+    private static final int BRACKETS_EXPANDED_DAYS = 2;
+    // the expansion processed a time list bracket, which applies its own timezone
+    private static final int BRACKETS_EXPANDED_TIME_LIST = 1;
     private static final int FRIDAY = 5;
     // Day of week constants (Monday=1, Sunday=7, matching TimestampDriver.getDayOfWeek())
     private static final int MONDAY = 1;
@@ -1150,7 +1155,7 @@ public final class IntervalUtils {
         StringSink expansionSink = tlSink1.get();
         expansionSink.clear();
         try {
-            boolean hadTimeListBracket = expandBracketsRecursive(
+            final int expansionFlags = expandBracketsRecursive(
                     timestampDriver,
                     configuration,
                     parseSeq,
@@ -1171,12 +1176,13 @@ public final class IntervalUtils {
             // Day filter applies BEFORE timezone conversion (based on local time)
             if (dayFilterMask != 0 && exchangeSchedule == null) {
                 if (applyEncoded) {
+                    // a month expanded into days keeps each day's interval whole, as a date-precise element does
                     applyDayFilter(
                             timestampDriver,
                             out,
                             outSize,
                             dayFilterMask,
-                            hasDatePrecision(parseSeq, parseLo, parseDateLim)
+                            (expansionFlags & BRACKETS_EXPANDED_DAYS) != 0 || hasDatePrecision(parseSeq, parseLo, parseDateLim)
                     );
                 } else {
                     // Dynamic mode: store day filter mask for runtime evaluation
@@ -1185,7 +1191,7 @@ public final class IntervalUtils {
             }
             // Apply timezone conversion if present AND no time list brackets were processed
             // (time list brackets handle their own timezone internally)
-            if (tzMarkerPos >= 0 && !hadTimeListBracket) {
+            if (tzMarkerPos >= 0 && (expansionFlags & BRACKETS_EXPANDED_TIME_LIST) == 0) {
                 applyTimezoneToIntervals(timestampDriver, configuration, out, outSize, effectiveSeq, tzLo, tzHi, position, applyEncoded);
             }
             // Tick calendar filter applies AFTER timezone conversion (intersects with UTC trading hours)
@@ -2318,10 +2324,11 @@ public final class IntervalUtils {
             }
         }
 
+        int expansionFlags = 0;
         if (elemHasBrackets) {
             StringSink expansionSink = tlCompileSink3.get();
             expansionSink.clear();
-            expandBracketsRecursive(
+            expansionFlags = expandBracketsRecursive(
                     timestampDriver, configuration, parseSink,
                     0, dateLimInSink, parseSink.length(),
                     position, tmp, IntervalOperation.INTERSECT,
@@ -2335,7 +2342,14 @@ public final class IntervalUtils {
 
         // Day filter in local time (before tz conversion)
         if (dayFilterMask != 0 && exchangeSchedule == null && tmp.size() >= 2) {
-            applyDayFilter(timestampDriver, tmp, 0, dayFilterMask, hasDatePrecision(effectiveSeq, es, ee));
+            // a month expanded into days keeps each day's interval whole, as a date-precise element does
+            applyDayFilter(
+                    timestampDriver,
+                    tmp,
+                    0,
+                    dayFilterMask,
+                    (expansionFlags & BRACKETS_EXPANDED_DAYS) != 0 || hasDatePrecision(effectiveSeq, es, ee)
+            );
         }
 
         // Append TAG_STATIC entries to IR
@@ -2613,9 +2627,10 @@ public final class IntervalUtils {
      * the sink to its entry state before returning, allowing the parent to continue
      * iterating through other values.
      *
-     * @return true if any time list brackets were processed, false otherwise
+     * @return {@link #BRACKETS_EXPANDED_TIME_LIST} if any time list brackets were processed, combined with
+     * {@link #BRACKETS_EXPANDED_DAYS} if a month-level date was expanded into days, 0 otherwise
      */
-    private static boolean expandBracketsRecursive(
+    private static int expandBracketsRecursive(
             TimestampDriver timestampDriver,
             CairoConfiguration configuration,
             CharSequence seq,
@@ -2667,7 +2682,7 @@ public final class IntervalUtils {
                     );
                     if (isExpanded) {
                         sink.clear(startLen);
-                        return false;
+                        return BRACKETS_EXPANDED_DAYS;
                     }
                 }
             }
@@ -2675,7 +2690,7 @@ public final class IntervalUtils {
             sink.put(seq, pos, fullLim);
             parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
             sink.clear(startLen);
-            return false; // No time list bracket processed
+            return 0;
         }
 
         // Copy text before bracket
@@ -2701,7 +2716,7 @@ public final class IntervalUtils {
                         globalTzSeq, globalTzLo, globalTzHi
                 );
                 sink.clear(startLen);
-                return true;
+                return BRACKETS_EXPANDED_TIME_LIST;
             }
             expandTimeListBracket(
                     timestampDriver,
@@ -2722,15 +2737,15 @@ public final class IntervalUtils {
                     globalTzHi
             );
             sink.clear(startLen);
-            return true; // Time list bracket was processed
+            return BRACKETS_EXPANDED_TIME_LIST;
         }
 
         // Determine zero-padding width based on position in timestamp
         // Use sink content for accurate analysis after prior bracket expansions
         int padWidth = determinePadWidth(sink);
 
-        // Track if any time list bracket was found in recursive calls
-        boolean foundTimeListBracket = false;
+        // Collect the result flags of the recursive calls
+        int expansionFlags = 0;
 
         // Iterate through values in bracket without allocating collections
         int i = bracketStart + 1;
@@ -2801,13 +2816,11 @@ public final class IntervalUtils {
             // Expand range (or single value if value == rangeEnd)
             for (int v = value; v <= rangeEnd; v++) {
                 appendPaddedInt(sink, v, padWidth);
-                if (expandBracketsRecursive(
+                expansionFlags |= expandBracketsRecursive(
                         timestampDriver, configuration, seq, bracketEnd + 1, dateLim, fullLim,
                         errorPos, out, operation, sink, depth + 1, applyEncoded, outSizeBeforeExpansion,
                         globalTzSeq, globalTzLo, globalTzHi
-                )) {
-                    foundTimeListBracket = true;
-                }
+                );
                 sink.clear(afterPrefixLen);
 
                 // Incremental merge: when interval count exceeds threshold, merge to bound memory
@@ -2850,7 +2863,7 @@ public final class IntervalUtils {
 
         // Restore sink to entry state
         sink.clear(startLen);
-        return foundTimeListBracket;
+        return expansionFlags;
     }
 
     /**
@@ -3231,6 +3244,7 @@ public final class IntervalUtils {
                     }
                 }
 
+                boolean isExpandedIntoDays = false;
                 if (hasBrackets) {
                     // Element has field expansion brackets - use existing recursive expansion
                     // Find where semicolon would be in the expanded string
@@ -3247,9 +3261,9 @@ public final class IntervalUtils {
 
                     final ObjectStackPool<StringSink> sinks = tlExpansionSinks.get();
                     final StringSink expansionSink = sinks.next();
-                    final boolean hadTimeListBracket;
+                    final int expansionFlags;
                     try {
-                        hadTimeListBracket = expandBracketsRecursive(
+                        expansionFlags = expandBracketsRecursive(
                                 timestampDriver,
                                 configuration,
                                 sink,
@@ -3271,9 +3285,10 @@ public final class IntervalUtils {
                         sinks.release(expansionSink);
                     }
                     // If time list brackets were processed, they handled TZ internally
-                    if (hadTimeListBracket) {
+                    if ((expansionFlags & BRACKETS_EXPANDED_TIME_LIST) != 0) {
                         activeTzLo = -1; // Clear to skip TZ application below
                     }
+                    isExpandedIntoDays = (expansionFlags & BRACKETS_EXPANDED_DAYS) != 0;
                 } else {
                     // No brackets - parse directly
                     parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
@@ -3283,13 +3298,14 @@ public final class IntervalUtils {
                 if (activeDayFilterMask != 0 && activeExchangeSchedule == null) {
                     if (applyEncoded) {
                         // Only expand to individual days if the element is an imprecise date (year/month)
-                        // Precise dates (with day component) should just be filtered, not expanded
+                        // Precise dates (with day component), and months that the bracket expansion
+                        // already turned into days, should just be filtered, not expanded
                         applyDayFilter(
                                 timestampDriver,
                                 out,
                                 outSizeBeforeElement,
                                 activeDayFilterMask,
-                                hasDatePrecision(elementSeq, resolvedElementStart, effectiveElementEnd)
+                                isExpandedIntoDays || hasDatePrecision(elementSeq, resolvedElementStart, effectiveElementEnd)
                         );
                     } else {
                         // Dynamic mode: store day filter mask for runtime evaluation
@@ -3587,9 +3603,9 @@ public final class IntervalUtils {
 
                 final ObjectStackPool<StringSink> sinks = tlExpansionSinks.get();
                 final StringSink expansionSink = sinks.next();
-                final boolean hadTimeListBracket;
+                final int expansionFlags;
                 try {
-                    hadTimeListBracket = expandBracketsRecursive(
+                    expansionFlags = expandBracketsRecursive(
                             timestampDriver,
                             configuration,
                             sink,
@@ -3610,7 +3626,7 @@ public final class IntervalUtils {
                 } finally {
                     sinks.release(expansionSink);
                 }
-                if (hadTimeListBracket) {
+                if ((expansionFlags & BRACKETS_EXPANDED_TIME_LIST) != 0) {
                     activeTzLo = -1;
                 }
             } else {

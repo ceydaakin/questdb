@@ -51,6 +51,10 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 import java.util.Collection;
 
@@ -443,6 +447,22 @@ public class TickExprTest {
                 "[{lo=2018-01-15T00:00:00.000000Z, hi=2018-01-15T23:59:59.999999Z},{lo=2018-06-15T00:00:00.000000Z, hi=2018-06-15T23:59:59.999999Z}]",
                 "2018-[01,06]-15"
         );
+    }
+
+    @Test
+    public void testBracketExpansionMonthDayFilterKeepsMultiDayDuration() throws SqlException {
+        // A month bracket followed by a duration expands into days, so the day filter must keep
+        // each day's interval whole, as it does for 2024-01#Mon;2d and 2024-01-[01..31]#Mon;2d.
+        // 2024-03-31 is a Sunday whose span reaches Monday 2024-04-01: April must not appear.
+        assertBracketInterval(mondays("2024-01-01", "2024-04-01", 0, 48 * 60), "2024-[01..03]#Mon;2d");
+        assertBracketInterval(mondays("2024-01-01", "2024-02-01", 0, 48 * 60), "2024-[01..01]#Mon;2d");
+        assertBracketInterval(mondays("2024-01-01", "2024-03-01", 0, 48 * 60), "[2024-01-08,2024-[01..02]]#Mon;2d");
+        // a time override expands the month into days too
+        assertBracketInterval(mondays("2024-01-01", "2024-02-01", 22 * 60, 4 * 60), "2024-[01..01]T22:00#Mon;4h");
+        // 2024-01-03 is a Wednesday, so $today drops out
+        final String withDateVariable = "[$today,2024-[01..02]]#Mon;2d";
+        assertBracketIntervalWithNow(mondays("2024-01-01", "2024-03-01", 0, 48 * 60), withDateVariable, "2024-01-03T10:00:00.000000Z");
+        assertCompiledTickExprWithNow(withDateVariable, "2024-01-03T10:00:00.000000Z");
     }
 
     // ================= ISO Week Date Tests =================
@@ -5834,6 +5854,26 @@ public class TickExprTest {
         int month = driver.getMonthOfYear(timestamp);
         int day = driver.getDayOfMonth(timestamp);
         return String.format("%04d-%02d-%02d", year, month, day);
+    }
+
+    /**
+     * Models a "#Mon" tick expression with java.time: one interval per Monday in [from, to),
+     * starting startMinute minutes after midnight and lasting durationMinutes.
+     */
+    private static String mondays(String from, String to, int startMinute, int durationMinutes) {
+        final DateTimeFormatter format = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSSSS'Z'");
+        final StringBuilder expected = new StringBuilder("[");
+        for (LocalDate day = LocalDate.parse(from); day.isBefore(LocalDate.parse(to)); day = day.plusDays(1)) {
+            if (day.getDayOfWeek() == DayOfWeek.MONDAY) {
+                LocalDateTime lo = day.atStartOfDay().plusMinutes(startMinute);
+                LocalDateTime hi = lo.plusMinutes(durationMinutes).minusNanos(1_000);
+                if (expected.length() > 1) {
+                    expected.append(',');
+                }
+                expected.append("{lo=").append(format.format(lo)).append(", hi=").append(format.format(hi)).append('}');
+            }
+        }
+        return expected.append(']').toString();
     }
 
     private static DateVariableExpr parseDateVar(CharSequence seq, int hi) throws SqlException {

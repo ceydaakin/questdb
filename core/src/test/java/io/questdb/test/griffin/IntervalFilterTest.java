@@ -907,6 +907,29 @@ public class IntervalFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInMonthBracketWithDayFilterAndMultiDayDuration() throws Exception {
+        assertMemoryLeak(() -> {
+            // one row per hour from Monday 2023-12-25 to Sunday 2024-04-07
+            execute(
+                    "CREATE TABLE x AS (" +
+                            "SELECT timestamp_sequence('2023-12-25'::TIMESTAMP, 3_600_000_000)::" + timestampType.getTypeName() + " ts" +
+                            " FROM long_sequence(2_520)" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY"
+            );
+            // each Monday of the months spans two days, Monday and Tuesday
+            assertSqlCursors(
+                    "SELECT * FROM x WHERE year(ts) = 2024 AND month(ts) <= 2 AND day_of_week(ts) <= 2",
+                    "SELECT * FROM x WHERE ts IN '2024-[01..02]#Mon;2d'"
+            );
+            // the span of Sunday 2024-03-31 must not add Monday 2024-04-01
+            assertSqlCursors(
+                    "SELECT * FROM x WHERE year(ts) = 2024 AND month(ts) <= 3 AND day_of_week(ts) <= 2",
+                    "SELECT * FROM x WHERE ts IN '2024-[01..03]#Mon;2d'"
+            );
+        });
+    }
+
+    @Test
     public void testIntervalBwdNoLeak() throws Exception {
         assertMemoryLeak(() -> {
             execute(
