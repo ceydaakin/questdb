@@ -34,6 +34,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -41,6 +42,32 @@ import io.questdb.std.Transient;
 import io.questdb.std.str.Sinkable;
 
 public class RndSymbolListFunctionFactory implements FunctionFactory {
+
+    /**
+     * Maps each list position to the first position that holds the same value, so that
+     * every distinct value has one symbol key. Null slots keep their own position.
+     */
+    static IntList toKeys(ObjList<String> symbols) {
+        final int n = symbols.size();
+        final IntList keys = new IntList(n);
+        final CharSequenceIntHashMap firstPositions = new CharSequenceIntHashMap(n);
+        for (int i = 0; i < n; i++) {
+            final String symbol = symbols.getQuick(i);
+            if (symbol == null) {
+                keys.add(i);
+                continue;
+            }
+            final int index = firstPositions.keyIndex(symbol);
+            if (index < 0) {
+                keys.add(firstPositions.valueAt(index));
+            } else {
+                firstPositions.putAt(index, symbol, i);
+                keys.add(i);
+            }
+        }
+        return keys;
+    }
+
     @Override
     public String getSignature() {
         return "rnd_symbol(V)";
@@ -64,18 +91,24 @@ public class RndSymbolListFunctionFactory implements FunctionFactory {
 
     private static final class Func extends SymbolFunction implements Function {
         private final int count;
+        private final IntList keys;
         private final ObjList<String> symbols;
         private Rnd rnd;
 
         public Func(ObjList<String> symbols) {
+            this(symbols, toKeys(symbols));
+        }
+
+        private Func(ObjList<String> symbols, IntList keys) {
             this.symbols = symbols;
+            this.keys = keys;
             this.count = symbols.size();
         }
 
         @Override
         public int getInt(Record rec) {
             final int key = next();
-            return symbols.getQuick(key) == null ? SymbolTable.VALUE_IS_NULL : key;
+            return symbols.getQuick(key) == null ? SymbolTable.VALUE_IS_NULL : keys.getQuick(key);
         }
 
         @Override
@@ -110,7 +143,7 @@ public class RndSymbolListFunctionFactory implements FunctionFactory {
 
         @Override
         public SymbolTable newSymbolTable() {
-            Func func = new Func(symbols);
+            Func func = new Func(symbols, keys);
             func.rnd = new Rnd(this.rnd.getSeed0(), this.rnd.getSeed1());
             return func;
         }

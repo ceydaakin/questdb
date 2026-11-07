@@ -34,6 +34,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -75,6 +76,8 @@ public class RndSymbolFunctionFactory implements FunctionFactory {
 
     private static final class Func extends SymbolFunction implements Function {
         private final int count;
+        private final CharSequenceIntHashMap firstPositions;
+        private final IntList keys;
         private final int nullRate;
         private final RndStringMemory strMem;
         private Rnd rnd;
@@ -83,6 +86,8 @@ public class RndSymbolFunctionFactory implements FunctionFactory {
             this.count = count;
             this.nullRate = nullRate + 1;
             this.strMem = strMem;
+            this.firstPositions = new CharSequenceIntHashMap(count);
+            this.keys = new IntList(count);
         }
 
         @Override
@@ -92,7 +97,8 @@ public class RndSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            return next();
+            final int key = next();
+            return key > -1 ? keys.getQuick(key) : key;
         }
 
         @Override
@@ -109,6 +115,20 @@ public class RndSymbolFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             rnd = executionContext.getRandom();
             strMem.init(rnd);
+            // Generated values can repeat. Give each distinct value the key of its first
+            // position, so that operators that compare keys see one key per value.
+            firstPositions.clear();
+            keys.clear();
+            for (int i = 0; i < count; i++) {
+                final CharSequence value = strMem.getStr(i);
+                final int index = firstPositions.keyIndex(value);
+                if (index < 0) {
+                    keys.add(firstPositions.valueAt(index));
+                } else {
+                    firstPositions.putAt(index, value, i);
+                    keys.add(i);
+                }
+            }
         }
 
         @Override

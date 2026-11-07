@@ -111,11 +111,13 @@ public class RndSymbolZipfFunctionFactory implements FunctionFactory {
         private final double alpha;
         private final int count;
         private final DoubleList cumulativeProbabilities;
+        private final IntList keys;
         private final ObjList<String> symbols;
         private Rnd rnd;
 
         public Func(ObjList<String> symbols, double alpha) {
             this.symbols = symbols;
+            this.keys = RndSymbolListFunctionFactory.toKeys(symbols);
             this.count = symbols.size();
             this.alpha = alpha;
             this.cumulativeProbabilities = new DoubleList(count);
@@ -139,7 +141,7 @@ public class RndSymbolZipfFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            return next();
+            return keys.getQuick(next());
         }
 
         @Override

@@ -104,12 +104,14 @@ public class RndSymbolWeightedFunctionFactory implements FunctionFactory {
     private static final class Func extends SymbolFunction implements Function {
         private final int count;
         private final DoubleList cumulativeProbabilities;
+        private final IntList keys;
         private final ObjList<String> symbols;
         private final DoubleList weights;
         private Rnd rnd;
 
         public Func(ObjList<String> symbols, DoubleList weights) {
             this.symbols = symbols;
+            this.keys = RndSymbolListFunctionFactory.toKeys(symbols);
             this.weights = weights;
             this.count = symbols.size();
             this.cumulativeProbabilities = new DoubleList(count);
@@ -136,7 +138,7 @@ public class RndSymbolWeightedFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            return next();
+            return keys.getQuick(next());
         }
 
         @Override
