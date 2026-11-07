@@ -48,7 +48,7 @@ public class CastSymbolToLong256FunctionFactory implements FunctionFactory {
     }
 
     static void appendLong256(CharSequence value, Long256Impl long256Builder, CharSink<?> sink) {
-        if (Numbers.extractLong256(value, long256Builder)) {
+        if (Numbers.extractLong256Hex(value, long256Builder)) {
             Numbers.appendLong256(long256Builder, sink);
         }
     }
@@ -76,7 +76,7 @@ public class CastSymbolToLong256FunctionFactory implements FunctionFactory {
             if (value == null) {
                 return Long256Impl.NULL_LONG256;
             }
-            return Numbers.parseLong256(value, long256a);
+            return Numbers.parseLong256Hex(value, long256a);
         }
 
         @Override
@@ -85,7 +85,7 @@ public class CastSymbolToLong256FunctionFactory implements FunctionFactory {
             if (value == null) {
                 return Long256Impl.NULL_LONG256;
             }
-            return Numbers.parseLong256(value, long256b);
+            return Numbers.parseLong256Hex(value, long256b);
         }
     }
 }

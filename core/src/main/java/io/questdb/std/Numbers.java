@@ -873,6 +873,24 @@ public final class Numbers {
         return false;
     }
 
+    /**
+     * Reads hex text the way INSERT reads it into a LONG256 column: an optional
+     * {@code 0x} or {@code 0X} prefix, then 1 to 64 hex digits.
+     */
+    public static boolean extractLong256Hex(@NotNull CharSequence value, @NotNull Long256Acceptor acceptor) {
+        final int len = value.length();
+        final int lo = len > 2 && value.charAt(0) == '0' && (value.charAt(1) | 32) == 'x' ? 2 : 0;
+        if (len > lo && len - lo < 65) {
+            try {
+                Long256FromCharSequenceDecoder.decode(value, lo, len, acceptor);
+                return true;
+            } catch (ImplicitCastException e) {
+                return false;
+            }
+        }
+        return false;
+    }
+
     public static long floorPow2(long value) {
         return value <= 0 ? 0 : Long.highestOneBit(value);
     }
@@ -1585,6 +1603,11 @@ public final class Numbers {
     @NotNull
     public static Long256Impl parseLong256(@NotNull Utf8Sequence text, @NotNull Long256Impl long256) {
         return extractLong256(text, long256) ? long256 : Long256Impl.NULL_LONG256;
+    }
+
+    @NotNull
+    public static Long256Impl parseLong256Hex(@NotNull CharSequence text, @NotNull Long256Impl long256) {
+        return extractLong256Hex(text, long256) ? long256 : Long256Impl.NULL_LONG256;
     }
 
     public static long parseLongDurationMicros(CharSequence sequence) throws NumericException {

@@ -5380,6 +5380,43 @@ public class CastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStrToLong256ReadsHexLikeInsert() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s STRING, v LONG256)");
+            execute("INSERT INTO t VALUES ('12', '12'), ('0X12', '0X12'), ('0x2', '0x2'), ('0x12', '0x12')");
+            // v holds what INSERT stored for the same text; every cast should agree with it
+            assertQuery("SELECT s, v, s::LONG256 str_cast, s::VARCHAR::LONG256 varchar_cast, s::SYMBOL::LONG256 symbol_cast," +
+                    " s::LONG256 = v str_eq, s::VARCHAR::LONG256 = v varchar_eq, s::SYMBOL::LONG256 = v symbol_eq FROM t")
+                    .expectSize()
+                    .returns("""
+                            s\tv\tstr_cast\tvarchar_cast\tsymbol_cast\tstr_eq\tvarchar_eq\tsymbol_eq
+                            12\t0x12\t0x12\t0x12\t0x12\ttrue\ttrue\ttrue
+                            0X12\t0x12\t0x12\t0x12\t0x12\ttrue\ttrue\ttrue
+                            0x2\t0x02\t0x02\t0x02\t0x02\ttrue\ttrue\ttrue
+                            0x12\t0x12\t0x12\t0x12\t0x12\ttrue\ttrue\ttrue
+                            """);
+            execute("CREATE TABLE names (n VARCHAR)");
+            execute("INSERT INTO names VALUES ('alice')");
+            assertQuery("SELECT sha256(n)::LONG256 digest FROM names")
+                    .expectSize()
+                    .returns("""
+                            digest
+                            0x2bd806c97f0e00af1a1fc3328fa763a9269723c8db8fac4f93af71db186d6e90
+                            """);
+            // text that is not 1 to 64 hex digits after an optional prefix stays NULL
+            execute("CREATE TABLE bad (s STRING)");
+            execute("INSERT INTO bad VALUES ('xyz'), ('0x'), ('0X'), (''), ('0x0x1'), ('1x02'), ('0xg'), (' 12'), ('" + "1".repeat(65) + "')");
+            assertQuery("SELECT count() FROM bad WHERE s::LONG256 IS NULL AND s::VARCHAR::LONG256 IS NULL AND s::SYMBOL::LONG256 IS NULL")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            9
+                            """);
+        });
+    }
+
+    @Test
     public void testStrToLong256Sort() throws Exception {
         assertQuery("select cast(a as long256) x from tt order by x")
                 .ddl("create table tt as (select rnd_str('0x00123455', '0x8802ff90', null, '0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926') a from long_sequence(20))")
@@ -5726,9 +5763,9 @@ public class CastTest extends AbstractCairoTest {
                         
                         
                         
-                        
-                        
-                        
+                        0x0880
+                        0x0880
+                        0x0880
                         0x123455
                         0x123455
                         0x8802ff90

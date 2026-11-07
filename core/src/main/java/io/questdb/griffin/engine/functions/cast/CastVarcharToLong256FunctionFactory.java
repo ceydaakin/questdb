@@ -78,7 +78,7 @@ public class CastVarcharToLong256FunctionFactory implements FunctionFactory {
             if (value == null) {
                 return Long256Impl.NULL_LONG256;
             }
-            return Numbers.parseLong256(value, long256a);
+            return Numbers.parseLong256Hex(value.asAsciiCharSequence(), long256a);
         }
 
         @Override
@@ -87,7 +87,7 @@ public class CastVarcharToLong256FunctionFactory implements FunctionFactory {
             if (value == null) {
                 return Long256Impl.NULL_LONG256;
             }
-            return Numbers.parseLong256(value, long256b);
+            return Numbers.parseLong256Hex(value.asAsciiCharSequence(), long256b);
         }
     }
 }
