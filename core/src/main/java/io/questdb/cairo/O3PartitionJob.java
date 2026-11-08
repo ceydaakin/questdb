@@ -2186,6 +2186,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         long duplicateCount = 0;
         long newParquetSize;
         long newParquetMetaFileSize;
+        // The size the updater committed to _pm, -1 until commitParquetMeta succeeds.
+        long committedParquetSize = -1;
         boolean isRewrite = false;
         CairoConfiguration cairoConfiguration = tableWriter.getConfiguration();
         FilesFacade ff = tableWriter.getFilesFacade();
@@ -2730,6 +2732,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // is a structural site, eager under ADAPTIVE, and a table held at
                 // SYNC until it enrols in adaptive still takes the barrier here.
                 partitionUpdater.commitParquetMeta(isSync);
+                committedParquetSize = newParquetSize;
             } catch (Throwable e) {
                 if (isRewrite) {
                     // Rewrite mode: original is intact. Remove the new directory.
@@ -2826,7 +2829,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             } else {
                 setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
             }
-            final long fileSize = Files.length(path.$());
+            // Publish the size the updater wrote, not the physical file length. An unclean
+            // exit can leave bytes of a lost update past the committed size, and an
+            // in-place update never truncates them, so the file can be longer than its
+            // last footer. No _pm footer describes that length, so committing it to
+            // _txn makes the partition unreadable.
+            final long fileSize = committedParquetSize > -1 ? committedParquetSize : Files.length(path.$());
             Unsafe.putLong(partitionUpdateSinkAddr, partitionTimestamp);
             Unsafe.putLong(partitionUpdateSinkAddr + Long.BYTES, o3TimestampMin);
             Unsafe.putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, newPartitionSize - duplicateCount);
