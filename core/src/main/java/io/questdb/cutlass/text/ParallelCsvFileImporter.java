@@ -152,6 +152,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private long importId;
     // path to import directory under, usually $inputWorkRoot/$tableName
     private CharSequence importRoot;
+    private int inputColumnCount;
     // name of file to process in inputRoot dir
     private CharSequence inputFileName;
     // incremented in phase 2
@@ -355,6 +356,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         rowsImported = 0;
         errors = 0;
         phaseErrors = 0;
+        inputColumnCount = 0;
         inputFileName = null;
         tableName = null;
         tableToken = null;
@@ -511,6 +513,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 lexer.parse(buf, buf + n, textAnalysisMaxLines, textMetadataDetector);
                 textMetadataDetector.evaluateResults(lexer.getLineCount(), lexer.getErrorCount());
                 forceHeader = textMetadataDetector.isHeader();
+                // prepareTable() appends the table columns the file lacks to the column types
+                inputColumnCount = textMetadataDetector.getColumnTypes().size();
 
                 prepareTable(
                         textMetadataDetector.getColumnNames(),
@@ -1242,6 +1246,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                             cairoEngine,
                             targetTableStructure,
                             textMetadataDetector.getColumnTypes(),
+                            inputColumnCount,
                             atomicity,
                             columnDelimiter,
                             importRoot,

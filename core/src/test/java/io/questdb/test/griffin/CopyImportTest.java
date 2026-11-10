@@ -388,6 +388,37 @@ public class CopyImportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelCopyDoesNotWriteExtraFieldIntoColumnMissingFromFile() throws Exception {
+        // the second row has a third field that the header does not name; it must not land
+        // in the table's INT column, which the file lacks
+        testParallelCopyIgnoresExtraFieldOnFirstRowOfPartition(
+                "CREATE TABLE t (k INT, i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                "COPY t FROM 'extra.csv' WITH HEADER true TIMESTAMP 'ts' ON ERROR SKIP_COLUMN",
+                "SELECT k, i, ts FROM t",
+                """
+                        k\ti\tts
+                        1\tnull\t2024-01-01T00:00:00.000000Z
+                        2\tnull\t2024-01-02T01:00:00.000000Z
+                        """
+        );
+    }
+
+    @Test
+    public void testParallelCopyIgnoresExtraFieldOnFirstRowOfPartitionInNewTable() throws Exception {
+        // the new table has only the file's columns, so the extra field has no column at all
+        testParallelCopyIgnoresExtraFieldOnFirstRowOfPartition(
+                null,
+                "COPY t FROM 'extra.csv' WITH HEADER true TIMESTAMP 'ts' PARTITION BY DAY ON ERROR SKIP_COLUMN",
+                "SELECT k, ts FROM t",
+                """
+                        k\tts
+                        1\t2024-01-01T00:00:00.000000Z
+                        2\t2024-01-02T01:00:00.000000Z
+                        """
+        );
+    }
+
+    @Test
     public void testParallelCopyFileWithRawLongTsIntoExistingTable() throws Exception {
         CopyRunnable stmt = () -> {
             execute("""
@@ -1359,6 +1390,47 @@ public class CopyImportTest extends AbstractCairoTest {
                 .returns("cnt\n" + expectedCount + "\n");
 
         testCopy(stmt, test);
+    }
+
+    // Each partition's import starts a fresh CSV lexer, so the second row (the first of its
+    // partition) can carry more fields than the header. The extra field must be ignored, as
+    // it is on any later row of a partition.
+    private void testParallelCopyIgnoresExtraFieldOnFirstRowOfPartition(
+            String ddl,
+            String copySql,
+            String query,
+            String expected
+    ) throws Exception {
+        final String csvRoot = inputRoot;
+        try {
+            final File dir = temp.newFolder("extra-field" + System.nanoTime());
+            TestUtils.writeStringToFile(
+                    new File(dir, "extra.csv"),
+                    """
+                            k,ts
+                            1,2024-01-01T00:00:00.000000Z
+                            2,2024-01-02T01:00:00.000000Z,123
+                            """
+            );
+            inputRoot = dir.getAbsolutePath();
+
+            CopyRunnable stmt = () -> {
+                if (ddl != null) {
+                    execute(ddl);
+                }
+                runAndFetchCopyID(copySql, sqlExecutionContext);
+            };
+
+            CopyRunnable test = () -> assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expected);
+
+            testCopy(stmt, test);
+        } finally {
+            inputRoot = csvRoot;
+        }
     }
 
     protected static String runAndFetchCopyID(String copySql, SqlExecutionContext sqlExecutionContext) throws SqlException {

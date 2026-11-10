@@ -354,6 +354,7 @@ public class CopyImportTask {
             CairoEngine cairoEngine,
             TableStructure targetTableStructure,
             ObjList<TypeAdapter> types,
+            int inputColumnCount,
             int atomicity,
             byte columnDelimiter,
             CharSequence importRoot,
@@ -368,6 +369,7 @@ public class CopyImportTask {
                 cairoEngine,
                 targetTableStructure,
                 types,
+                inputColumnCount,
                 atomicity,
                 columnDelimiter,
                 importRoot,
@@ -880,6 +882,7 @@ public class CopyImportTask {
         private int hi;
         private CharSequence importRoot;
         private int index;
+        private int inputColumnCount;
         private CharSequence inputFileName;
         private int lo;
         private long offset;
@@ -902,6 +905,7 @@ public class CopyImportTask {
             this.atomicity = -1;
             this.columnDelimiter = (byte) -1;
             this.importRoot = null;
+            this.inputColumnCount = 0;
             this.inputFileName = null;
             this.index = -1;
             this.partitions = null;
@@ -1447,7 +1451,10 @@ public class CopyImportTask {
             if (w == null) {
                 return;
             }
-            for (int i = 0; i < valuesLength; i++) {
+            // Each partition starts a fresh lexer, which takes its field count from the
+            // partition's first row, so that row can carry more fields than the file has
+            // columns. Columns past inputColumnCount are table columns the file lacks.
+            for (int i = 0, n = Math.min(valuesLength, inputColumnCount); i < n; i++) {
                 dus = values.getQuick(i);
                 if (i == timestampIndex || dus.size() == 0) {
                     continue;
@@ -1521,6 +1528,7 @@ public class CopyImportTask {
                 CairoEngine cairoEngine,
                 TableStructure targetTableStructure,
                 ObjList<TypeAdapter> types,
+                int inputColumnCount,
                 int atomicity,
                 byte columnDelimiter,
                 CharSequence importRoot,
@@ -1533,6 +1541,7 @@ public class CopyImportTask {
             this.engine = cairoEngine;
             this.targetTableStructure = targetTableStructure;
             this.types = types;
+            this.inputColumnCount = inputColumnCount;
             this.atomicity = atomicity;
             this.columnDelimiter = columnDelimiter;
             this.importRoot = importRoot;
