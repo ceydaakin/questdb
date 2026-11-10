@@ -1023,7 +1023,14 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
                 if (unused) {
                     names.add(metadata.getColumnName(i));
-                    types.add(typeManager.getTypeAdapter(metadata.getColumnType(i)));
+                    final int columnType = metadata.getColumnType(i);
+                    // the writer leaves these columns NULL; DATE and TIMESTAMP have no
+                    // format-less adapter, so they take the NULL-writing ones
+                    switch (ColumnType.tagOf(columnType)) {
+                        case ColumnType.DATE -> types.add(BadDateAdapter.INSTANCE);
+                        case ColumnType.TIMESTAMP -> types.add(BadTimestampAdapter.INSTANCE);
+                        default -> types.add(typeManager.getTypeAdapter(columnType));
+                    }
                     remapIndex.add(i);
                 }
             }

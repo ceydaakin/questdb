@@ -422,6 +422,34 @@ public class CopyImportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelCopyIntoExistingTableWithDateAndTimestampColumnsMissingFromFile() throws Exception {
+        // the file has no column for the table's DATE and TIMESTAMP columns, so the import leaves them NULL,
+        // as it does for a VARCHAR column the file lacks
+        assertCopyLeavesMissingColumnsNull(
+                "CREATE TABLE t (k INT, d DATE, t2 TIMESTAMP, v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                "SELECT k, d, t2, v, ts FROM t",
+                """
+                        k\td\tt2\tv\tts
+                        1\t\t\t\t2024-01-01T00:00:00.000000Z
+                        2\t\t\t\t2024-01-02T00:00:00.000000Z
+                        """
+        );
+    }
+
+    @Test
+    public void testParallelCopyIntoExistingTableWithNanoTimestampColumnMissingFromFile() throws Exception {
+        assertCopyLeavesMissingColumnsNull(
+                "CREATE TABLE t (k INT, t2 TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                "SELECT k, t2, ts FROM t",
+                """
+                        k\tt2\tts
+                        1\t\t2024-01-01T00:00:00.000000Z
+                        2\t\t2024-01-02T00:00:00.000000Z
+                        """
+        );
+    }
+
+    @Test
     public void testParallelCopyIntoExistingTableWithDefaultWorkDir() throws Exception {
         String inputWorkRootTmp = inputWorkRoot;
         try (Path path = new Path()) {
@@ -1286,6 +1314,49 @@ public class CopyImportTest extends AbstractCairoTest {
                 Path.clearThreadLocals();
             }
         });
+    }
+
+    private void assertCopyLeavesMissingColumnsNull(String ddl, String query, String expected) throws Exception {
+        final String csvRoot = inputRoot;
+        try {
+            final File dir = temp.newFolder("missing-columns" + System.nanoTime());
+            TestUtils.writeStringToFile(
+                    new File(dir, "missing-columns.csv"),
+                    """
+                            k,ts
+                            1,2024-01-01T00:00:00.000000Z
+                            2,2024-01-02T00:00:00.000000Z
+                            """
+            );
+            inputRoot = dir.getAbsolutePath();
+
+            CopyRunnable stmt = () -> {
+                execute(ddl);
+                runAndFetchCopyID(
+                        "COPY t FROM 'missing-columns.csv' WITH HEADER true TIMESTAMP 'ts' PARTITION BY DAY",
+                        sqlExecutionContext
+                );
+            };
+
+            CopyRunnable test = () -> {
+                assertQuery("SELECT status, message, rows_imported FROM " + configuration.getSystemTableNamePrefix() + "text_import_log LIMIT -1")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                status\tmessage\trows_imported
+                                finished\t\t2
+                                """);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns(expected);
+            };
+
+            testCopy(stmt, test);
+        } finally {
+            inputRoot = csvRoot;
+        }
     }
 
     private void assertQuotesTableContent() throws Exception {
