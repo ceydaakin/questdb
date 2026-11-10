@@ -115,7 +115,11 @@ public class ConcatFunctionFactory implements FunctionFactory {
     }
 
     private static void sinkChar(Decimal256 decimal256, Decimal128 decimal128, Utf16Sink sink, Function function, Record record) {
-        sink.put(function.getChar(record));
+        final char c = function.getChar(record);
+        // char 0 is a NULL CHAR, it adds nothing to the result, like a NULL STRING
+        if (c != 0) {
+            sink.put(c);
+        }
     }
 
     private static void sinkDate(Decimal256 decimal256, Decimal128 decimal128, Utf16Sink sink, Function function, Record record) {

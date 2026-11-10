@@ -198,6 +198,33 @@ public class ConcatFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullChar() throws Exception {
+        // A NULL CHAR is stored as char 0. It must contribute nothing to the result, like a
+        // NULL STRING, SYMBOL or VARCHAR, rather than a NUL character.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT NULL::CHAR c, 'a'::CHAR d FROM long_sequence(1))");
+
+            // constant arguments
+            assertQuery("SELECT concat(NULL::CHAR, 'x') r, length(concat(NULL::CHAR, 'x')) len, NULL::CHAR || 'x' r2")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            r\tlen\tr2
+                            x\t1\tx
+                            """);
+
+            // column arguments
+            assertQuery("SELECT concat(c) r0, concat(c, 'x', d) r, length(concat(c, 'x', d)) len, c || 'x' r2 FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            r0\tr\tlen\tr2
+                            \txa\t2\tx
+                            """);
+        });
+    }
+
+    @Test
     public void testNullStr() throws Exception {
         assertQuery("select concat(sym, str, v) from x")
                 .ddl("create table x as (select rnd_symbol(null) sym, rnd_str(null) str, rnd_varchar(null) v from long_sequence(1))")
