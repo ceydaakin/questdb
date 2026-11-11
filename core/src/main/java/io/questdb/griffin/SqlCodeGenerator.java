@@ -801,6 +801,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             SqlExecutionContext executionContext
     ) throws SqlException {
         final Function filter = functionParser.parseFunction(expr, metadata, executionContext);
+        if (filter instanceof GroupByFunction) {
+            // an aggregate has no value for a row filter to read: its getBool() expects a map value
+            Misc.free(filter);
+            throw SqlException.$(expr.position, "aggregate function is not allowed in WHERE or JOIN ON clause");
+        }
         if (isBoolean(filter.getType())) {
             return filter;
         }

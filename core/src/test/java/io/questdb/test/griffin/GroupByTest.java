@@ -842,6 +842,37 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAggregateFunctionAsFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE n (c CHAR, b BOOLEAN, l LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO n VALUES (null, false, 1, 0)");
+            final String message = "aggregate function is not allowed in WHERE or JOIN ON clause";
+
+            // a bind variable argument used to make the aggregate look like a runtime constant filter
+            bindVariableService.clear();
+            bindVariableService.setChar(0, 'a');
+            assertQuery("SELECT * FROM n WHERE isOrdered($1)").noLeakCheck().fails(22, message);
+            bindVariableService.clear();
+            bindVariableService.setLong(0, 5);
+            assertQuery("SELECT * FROM n WHERE isOrdered($1)").noLeakCheck().fails(22, message);
+            assertQuery("SELECT * FROM n WHERE bool_and($1::BOOLEAN)").noLeakCheck().fails(22, message);
+            assertQuery("SELECT * FROM n n1 JOIN n n2 ON n1.ts = n2.ts WHERE isOrdered($1)").noLeakCheck().fails(52, message);
+
+            bindVariableService.clear();
+            assertQuery("SELECT * FROM n WHERE isOrdered(l)").noLeakCheck().fails(22, message);
+            assertQuery("SELECT * FROM n WHERE isOrdered(1)").noLeakCheck().fails(22, message);
+            assertQuery("SELECT * FROM n WHERE bool_or(b)").noLeakCheck().fails(22, message);
+            assertQuery("SELECT * FROM n n1 JOIN n n2 ON isOrdered(n1.l)").noLeakCheck().fails(32, message);
+
+            // aggregates stay valid in the projection
+            assertQuery("SELECT isOrdered(l) FROM n").noRandomAccess().expectSize().returns("""
+                    isOrdered
+                    true
+                    """);
+        });
+    }
+
+    @Test
     public void testCountStarInExpressions() throws Exception {
         assertQuery("SELECT count(*) + count(*) AS s, coalesce(count(*), 5) AS c, 2 * count(*) AS d FROM t")
                 .ddl("CREATE TABLE t AS (SELECT x AS v FROM long_sequence(3))")
