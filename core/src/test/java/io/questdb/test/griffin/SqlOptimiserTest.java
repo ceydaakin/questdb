@@ -756,8 +756,6 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                 "limit 1) y2 on y2.LAST = y1.ts)").replaceAll("#JOIN_TYPE", joinType),
                         model.toString0()
                 );
-                // TODO: there's a forward scan on y2 whereas it should be a backward scan;
-                //       it could have something to do with SqlOptimiser.optimiseOrderBy()
                 assertQuery(query)
                         .noLeakCheck()
                         .assertsPlan("SelectedRecord\n" +
@@ -773,13 +771,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                 "                    Row forward scan\n" +
                                 "                    Frame forward scan on: y1\n" +
                                 "        Hash\n" +
-                                "            SelectedRecord\n" +
-                                "                Async Top K lo: 1 workers: 1\n" +
-                                "                  filter: null\n" +
-                                "                  keys: [ts desc]\n" +
+                                "            Limit value: 1 skip-rows: 0 take-rows: 0\n" +
+                                "                SelectedRecord\n" +
                                 "                    PageFrame\n" +
-                                "                        Row forward scan\n" +
-                                "                        Frame forward scan on: y2\n");
+                                "                        Row backward scan\n" +
+                                "                        Frame backward scan on: y2\n");
             }
         });
     }
@@ -2886,13 +2882,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                                 Row forward scan
                                                 Frame forward scan on: y1
                                     Hash
-                                        SelectedRecord
-                                            Async Top K lo: 1 workers: 1
-                                              filter: null
-                                              keys: [ts desc]
+                                        Limit value: 1 skip-rows: 0 take-rows: 0
+                                            SelectedRecord
                                                 PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: y2
+                                                    Row backward scan
+                                                    Frame backward scan on: y2
                             """
                     );
         });

@@ -835,6 +835,15 @@ public class SqlOptimiser implements Mutable {
                 || (joinType == IQueryModel.JOIN_CROSS && model.getDependencies().size() > 0);
     }
 
+    private static boolean isOrderInsensitiveJoin(int joinType) {
+        return switch (joinType) {
+            case IQueryModel.JOIN_INNER, IQueryModel.JOIN_LEFT_OUTER, IQueryModel.JOIN_RIGHT_OUTER,
+                 IQueryModel.JOIN_FULL_OUTER, IQueryModel.JOIN_CROSS, IQueryModel.JOIN_CROSS_LEFT,
+                 IQueryModel.JOIN_CROSS_RIGHT, IQueryModel.JOIN_CROSS_FULL -> true;
+            default -> false;
+        };
+    }
+
     private static boolean isOrderedByDesignatedTimestamp(IQueryModel model) {
         return model.getTimestamp() != null
                 && model.getOrderBy().size() == 1
@@ -8455,6 +8464,16 @@ public class SqlOptimiser implements Mutable {
 
         final ObjList<IQueryModel> jm = model.getJoinModels();
         pushDownOrderByAdviceToJoinModels(model, jm, orderByMnemonic, orderByDirectionAdvice);
+        // A join's right-hand sub-query may carry an ORDER BY on the designated timestamp with a
+        // pushed-down LIMIT advice (pushDownLimitAdvice). That advice is only correct when the
+        // table scan follows the ORDER BY direction, which needs the order by advice computed here.
+        // Time-series and lateral joins keep their own ordering rules, so they are left alone.
+        for (int i = 1, k = jm.size(); i < k; i++) {
+            final IQueryModel joinModel = jm.getQuick(i);
+            if (isOrderInsensitiveJoin(joinModel.getJoinType())) {
+                optimiseOrderBy(joinModel, OrderByMnemonic.ORDER_BY_UNKNOWN);
+            }
+        }
 
         final IQueryModel union = model.getUnionModel();
         if (union != null) {
@@ -9120,7 +9139,8 @@ public class SqlOptimiser implements Mutable {
         // get primary model
         IQueryModel jm1 = jm.getQuiet(0);
         jm1 = jm1 != null ? jm1.getNestedModel() : null;
-        if (jm1 == null) {
+        // a shared, read-only model (QueryModelWrapper) takes no advice
+        if (jm1 == null || !jm1.isOptimisable()) {
             return;
         }
 

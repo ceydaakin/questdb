@@ -5295,6 +5295,55 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinOnFilteredLatestTimestampSubQuery() throws Exception {
+        // the right-hand sub-query must scan backward so that its LIMIT keeps the newest row
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t SELECT '2024-01-01'::TIMESTAMP + (x - 1) * 7_200_000_000L, 's' || (x % 3), x FROM long_sequence(36)");
+
+            final String newest = """
+                    ts\tsym\tv
+                    2024-01-03T20:00:00.000000Z\ts2\t35
+                    """;
+            final String[] newestSubQueries = {
+                    "SELECT max(ts) mts FROM t WHERE sym = 's2'",
+                    "SELECT last(ts) mts FROM t WHERE sym = 's2'",
+                    "SELECT ts mts FROM t WHERE sym = 's2' ORDER BY ts DESC LIMIT 1",
+            };
+            for (String subQuery : newestSubQueries) {
+                assertQuery("SELECT t.ts, t.sym, t.v FROM t JOIN (" + subQuery + ") m ON t.ts = m.mts")
+                        .noRandomAccess()
+                        .timestamp("ts")
+                        .returns(newest);
+            }
+
+            assertQuery("SELECT t.ts, t.sym, t.v FROM t JOIN (SELECT max(ts) mts FROM t WHERE ts IN '2024-01-01' AND sym = 's2') m ON t.ts = m.mts")
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tsym\tv
+                            2024-01-01T20:00:00.000000Z\ts2\t11
+                            """);
+
+            final String oldest = """
+                    ts\tsym\tv
+                    2024-01-01T02:00:00.000000Z\ts2\t2
+                    """;
+            final String[] oldestSubQueries = {
+                    "SELECT min(ts) mts FROM t WHERE sym = 's2'",
+                    "SELECT first(ts) mts FROM t WHERE sym = 's2'",
+                    "SELECT ts mts FROM t WHERE sym = 's2' ORDER BY ts LIMIT 1",
+            };
+            for (String subQuery : oldestSubQueries) {
+                assertQuery("SELECT t.ts, t.sym, t.v FROM t JOIN (" + subQuery + ") m ON t.ts = m.mts")
+                        .noRandomAccess()
+                        .timestamp("ts")
+                        .returns(oldest);
+            }
+        });
+    }
+
+    @Test
     public void testJoinOnGeohash() throws Exception {
         assertMemoryLeak(() -> {
             execute(
