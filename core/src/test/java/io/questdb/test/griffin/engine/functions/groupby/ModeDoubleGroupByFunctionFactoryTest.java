@@ -255,6 +255,30 @@ public class ModeDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testModeWithSampleByFillLinearNotSupported() throws Exception {
+        // the map value holds a hash map pointer, which cannot store an interpolated value
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00', 1.0), ('2024-01-01T03:00', 4.0)");
+            final String sql = "SELECT ts, mode(x) FROM t SAMPLE BY 1h FILL(LINEAR)";
+            assertExceptionNoLeakCheck(sql, sql.indexOf("LINEAR"), "support for LINEAR fill is not yet implemented");
+            final String sqlAligned = "SELECT ts, mode(x) FROM t SAMPLE BY 1h FILL(LINEAR) ALIGN TO FIRST OBSERVATION";
+            assertExceptionNoLeakCheck(sqlAligned, sqlAligned.indexOf("LINEAR"), "support for LINEAR fill is not yet implemented");
+            assertQuery("SELECT ts, mode(x) FROM t SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tmode
+                            2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:00:00.000000Z\tnull
+                            2024-01-01T02:00:00.000000Z\tnull
+                            2024-01-01T03:00:00.000000Z\t4.0
+                            """);
+        });
+    }
+
+    @Test
     public void testModeWithWhereClause() throws Exception {
         assertQuery("select mode(f) from tab where filter < 5")
                 .ddl("create table tab as (" +

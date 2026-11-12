@@ -692,6 +692,31 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTwapWithSampleByFillLinearNotSupported() throws Exception {
+        // the map value holds an observation buffer, which cannot store an interpolated value
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00', 1.0), ('2024-01-01T03:00', 4.0)");
+            final String sql = "SELECT ts, twap(x, ts) FROM t SAMPLE BY 1h FILL(LINEAR)";
+            assertExceptionNoLeakCheck(sql, sql.indexOf("LINEAR"), "support for LINEAR fill is not yet implemented");
+            final String sqlAligned = "SELECT ts, twap(x, ts) FROM t SAMPLE BY 1h FILL(LINEAR) ALIGN TO FIRST OBSERVATION";
+            assertExceptionNoLeakCheck(sqlAligned, sqlAligned.indexOf("LINEAR"), "support for LINEAR fill is not yet implemented");
+            // a single observation per bucket: twap equals that price
+            assertQuery("SELECT ts, twap(x, ts) FROM t SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\ttwap
+                            2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:00:00.000000Z\tnull
+                            2024-01-01T02:00:00.000000Z\tnull
+                            2024-01-01T03:00:00.000000Z\t4.0
+                            """);
+        });
+    }
+
+    @Test
     public void testTwapWithSampleByFillPrev() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
