@@ -75,6 +75,13 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
                     }
                 }
                 if (!hasFinite) {
+                    if (mapValue.getLong(valueIndex + 2) == 0) {
+                        // Leave the state computeFirst leaves for a NULL row: the caller marks
+                        // the value as started, so a later row-by-row frame calls computeNext,
+                        // which adds to the sum. A NaN sum would swallow those rows.
+                        mapValue.putDouble(valueIndex, 0);
+                        mapValue.putDouble(valueIndex + 1, 0.0);
+                    }
                     return;
                 }
                 batchSum += bc;

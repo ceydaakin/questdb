@@ -69,6 +69,12 @@ public class AvgLongGroupByFunction extends DoubleFunction implements GroupByFun
                 mapValue.putLong(valueIndex + 1, prevCount + batchCount);
             } else {
                 mapValue.putLong(valueIndex + 1, prevCount);
+                if (prevCount == 0) {
+                    // Leave the state computeFirst leaves for a NULL row: the caller marks
+                    // the value as started, so a later row-by-row frame calls computeNext,
+                    // which adds to the sum. A NaN sum would swallow those rows.
+                    mapValue.putDouble(valueIndex, 0);
+                }
             }
         }
     }

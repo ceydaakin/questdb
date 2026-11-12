@@ -124,6 +124,31 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnTopFrameAfterAllNullFrame() throws Exception {
+        // The 2024-01-01 frame holds only NULL in v, i and l and is aggregated as a batch.
+        // The 2024-01-02 frame has a column top for w, so it is aggregated row by row and
+        // must add to the empty state the batch left behind.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v DOUBLE, i INT, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        (1.0, 1, 1, '2024-01-02T00:00:00.000000Z'),
+                        (2.0, 2, 2, '2024-01-02T01:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE t ADD COLUMN w DOUBLE");
+            execute("INSERT INTO t VALUES (NULL, NULL, NULL, '2024-01-01T00:00:00.000000Z', 5.0)");
+            assertQuery("SELECT avg(v), ksum(v), nsum(v), sum(v), avg(i), avg(l), max(w) FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            avg	ksum	nsum	sum	avg1	avg2	max
+                            1.5	3.0	3.0	3.0	1.5	1.5	5.0
+                            """);
+        });
+    }
+
+    @Test
     public void testInterpolatedAvg() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table fill_options(ts timestamp, price int) timestamp(ts);");

@@ -74,6 +74,22 @@ public class DoubleGroupByFunctionBatchTest extends AbstractGroupByFunctionBatch
         }
     }
 
+    // A batch with no value leaves the state empty; computeNext must add to it when a
+    // later frame with a column top runs row by row.
+    @Test
+    public void testAvgDoubleBatchAllNaNThenComputeNext() {
+        AvgDoubleGroupByFunction function = new AvgDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateDoubles(Double.NaN, Double.NaN);
+            function.computeBatch(value, ptr, 2, 0);
+            function.computeNext(value, recordOf(1.0), 2);
+            function.computeNext(value, recordOf(2.0), 3);
+
+            Assert.assertEquals(2L, value.getLong(1));
+            Assert.assertEquals(1.5, function.getDouble(value), 0.0);
+        }
+    }
+
     @Test
     public void testCountDoubleBatch() {
         CountDoubleGroupByFunction function = new CountDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
@@ -257,6 +273,19 @@ public class DoubleGroupByFunctionBatchTest extends AbstractGroupByFunctionBatch
             function.computeBatch(value, ptr, 2, 0);
 
             Assert.assertTrue(Double.isNaN(function.getDouble(value)));
+        }
+    }
+
+    @Test
+    public void testKSumDoubleBatchAllNaNThenComputeNext() {
+        KSumDoubleGroupByFunction function = new KSumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateDoubles(Double.NaN, Double.NaN);
+            function.computeBatch(value, ptr, 2, 0);
+            function.computeNext(value, recordOf(1.0), 2);
+            function.computeNext(value, recordOf(2.0), 3);
+
+            Assert.assertEquals(3.0, function.getDouble(value), 0.0);
         }
     }
 
@@ -609,6 +638,19 @@ public class DoubleGroupByFunctionBatchTest extends AbstractGroupByFunctionBatch
             function.computeBatch(value, ptr, 2, 0);
 
             Assert.assertTrue(Double.isNaN(function.getDouble(value)));
+        }
+    }
+
+    @Test
+    public void testNSumDoubleBatchAllNaNThenComputeNext() {
+        NSumDoubleGroupByFunction function = new NSumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateDoubles(Double.NaN, Double.NaN);
+            function.computeBatch(value, ptr, 2, 0);
+            function.computeNext(value, recordOf(1.0), 2);
+            function.computeNext(value, recordOf(2.0), 3);
+
+            Assert.assertEquals(3.0, function.getDouble(value), 0.0);
         }
     }
 

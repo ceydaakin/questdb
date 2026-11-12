@@ -86,6 +86,21 @@ public class LongGroupByFunctionBatchTest extends AbstractGroupByFunctionBatchTe
         }
     }
 
+    // A batch with no value leaves the state empty; computeNext must add to it when a
+    // later frame with a column top runs row by row.
+    @Test
+    public void testAvgLongBatchAllNullThenComputeNext() {
+        AvgLongGroupByFunction function = new AvgLongGroupByFunction(LongColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateLongs(Numbers.LONG_NULL, Numbers.LONG_NULL);
+            function.computeBatch(value, ptr, 2, 0);
+            function.computeNext(value, recordOf(1), 2);
+            function.computeNext(value, recordOf(2), 3);
+
+            Assert.assertEquals(1.5, function.getDouble(value), 0.0);
+        }
+    }
+
     // After a finite batch followed by an all-null batch, the previous count must be
     // preserved (sumLongAcc overwrites the count pointer; restore on the empty path).
     @Test
@@ -544,5 +559,15 @@ public class LongGroupByFunctionBatchTest extends AbstractGroupByFunctionBatchTe
         try (SimpleMapValue value = prepare(function)) {
             Assert.assertEquals(Numbers.LONG_NULL, function.getLong(value));
         }
+    }
+
+    private static Record recordOf(long value) {
+        return new Record() {
+            @Override
+            public long getLong(int col) {
+                assert col == COLUMN_INDEX;
+                return value;
+            }
+        };
     }
 }
