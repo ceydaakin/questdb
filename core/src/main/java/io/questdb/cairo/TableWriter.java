@@ -11030,7 +11030,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Under SYNC, flushes the file names of an existing partition directory, see
+     * Under SYNC, flushes the file names of an existing partition directory, or of the table directory, see
      * {@link #fsyncPartitionDirUnderSync(long, long)}. A failed barrier is a data-sync failure.
      */
     private void fsyncPartitionDirUnderSync(Path partitionPath, int partitionDirLen) {
@@ -11351,6 +11351,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     ff.removeQuiet(valueFileName(IndexType.BITMAP, other.trimTo(pathSize), newName, newColumnNameTxn, -1L));
                     throw e;
                 }
+                // The links are the last names this rename adds to the table directory.
+                fsyncPartitionDirUnderSync(path.trimTo(pathSize), pathSize);
                 purgingOperator.add(columnIndex, columnName, columnType, indexType, symbolTableNameTxn, PurgingOperator.TABLE_ROOT_PARTITION, -1L);
                 columnVersionWriter.upsertSymbolTableTxnName(columnIndex, newColumnNameTxn);
             }

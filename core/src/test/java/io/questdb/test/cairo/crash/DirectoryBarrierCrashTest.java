@@ -72,7 +72,8 @@ import static io.questdb.test.cairo.crash.FsyncFailureFacade.isCalledFrom;
  *   then the table directory, before the commit that publishes them. A failed one poisons the engine, as every
  *   failed barrier does. The same for each partition directory RENAME COLUMN, DROP INDEX or UPDATE adds names to:
  *   the column files linked or written under a new name txn, the covering values of the indexes that INCLUDE
- *   the column linked under it, and the index files UPDATE rebuilds.</li>
+ *   the column linked under it, and the index files UPDATE rebuilds. RENAME COLUMN of a SYMBOL column also fsyncs
+ *   the table directory, which holds the symbol map files it links under the new name.</li>
  *   <li>SYNC and ADAPTIVE fsync each column file ALTER COLUMN TYPE converts, data before aux, before the commit
  *   that publishes it, and each file a parquet conversion writes. A failed one poisons the engine too; under ASYNC
  *   it only fails the statement.</li>
@@ -607,6 +608,26 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     @Test
     public void testSyncRenameCoveredColumnWalSurvivesCrash() throws Exception {
         assertSyncCoveredColumnChangeSurvivesCrash(true, "ALTER TABLE x RENAME COLUMN v TO w", this::assertRenamedCoveredColumn);
+    }
+
+    @Test
+    public void testSyncRenameSymbolColumnNonWalFailedBarrierIsFailStop() throws Exception {
+        assertSyncRenameSymbolColumnTableDirBarrierFailureIsFailStop(false);
+    }
+
+    @Test
+    public void testSyncRenameSymbolColumnNonWalSurvivesCrash() throws Exception {
+        assertSyncRenameSymbolColumnSurvivesCrash(false);
+    }
+
+    @Test
+    public void testSyncRenameSymbolColumnWalFailedBarrierIsFailStop() throws Exception {
+        assertSyncRenameSymbolColumnTableDirBarrierFailureIsFailStop(true);
+    }
+
+    @Test
+    public void testSyncRenameSymbolColumnWalSurvivesCrash() throws Exception {
+        assertSyncRenameSymbolColumnSurvivesCrash(true);
     }
 
     @Test
@@ -1349,6 +1370,37 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
      */
     private void assertSyncCoveredColumnChangeSurvivesCrash(boolean wal, String sql, TestUtils.LeakProneCode assertAfterCrash) throws Exception {
         assertSyncSchemaChangeSurvivesCrash(wal, COVERED_COLUMN_TABLE, null, () -> execute(sql), assertAfterCrash);
+    }
+
+    /**
+     * Under SYNC, the table directory barrier after RENAME COLUMN links an indexed SYMBOL column's symbol map files
+     * fails. It follows the barriers of the three partition directories. The engine must be poisoned, as for every
+     * other failed barrier. Renames {@code k}, so the next write, which names {@code s}, still compiles.
+     */
+    private void assertSyncRenameSymbolColumnTableDirBarrierFailureIsFailStop(boolean wal) throws Exception {
+        Assume.assumeFalse("a directory takes no fsync on Windows", Os.isWindows());
+        assertSyncFailure("sync", wal, COVERED_COLUMN_TABLE, null, () -> execute("ALTER TABLE x RENAME COLUMN k TO k2"), new FsyncFailureFacade("fsyncPartitionDirUnderSync", 3, false), true);
+    }
+
+    /**
+     * RENAME COLUMN of an indexed SYMBOL column returns under SYNC, then the power fails. The symbol map files it
+     * links under the new name in the table directory must survive, or every query that reads the column fails
+     * with "SymbolMap does not exist".
+     */
+    private void assertSyncRenameSymbolColumnSurvivesCrash(boolean wal) throws Exception {
+        assertSyncSchemaChangeSurvivesCrash(wal, null, () -> execute("ALTER TABLE x RENAME COLUMN s TO s2"), () -> {
+            assertQuery("SELECT s2, v, ts FROM x").timestamp("ts").expectSize().returns("""
+                    s2\tv\tts
+                    a\t1.0\t2024-01-01T00:00:00.000000Z
+                    b\t2.0\t2024-01-02T00:00:00.000000Z
+                    a\t3.0\t2024-01-03T00:00:00.000000Z
+                    """);
+            assertQuery("SELECT s2, v, ts FROM x WHERE s2 = 'a'").timestamp("ts").returns("""
+                    s2\tv\tts
+                    a\t1.0\t2024-01-01T00:00:00.000000Z
+                    a\t3.0\t2024-01-03T00:00:00.000000Z
+                    """);
+        });
     }
 
     /**
