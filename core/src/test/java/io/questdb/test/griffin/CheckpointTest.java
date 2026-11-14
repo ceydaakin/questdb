@@ -1939,6 +1939,20 @@ public class CheckpointTest extends AbstractCairoTest {
         }
     }
 
+    private void assertIndexLookupsMatchFullScan(String... columns) throws Exception {
+        for (String column : columns) {
+            for (String key : new String[]{"a", "b", "c"}) {
+                final String select = "SELECT val, ts FROM t WHERE ts IN '2024-01-01' AND " + column;
+                printSql(select + "::STRING = '" + key + "'");
+                assertQuery(select + " = '" + key + "'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .withPlanContaining("on: " + column)
+                        .returns(sink.toString());
+            }
+        }
+    }
+
     private void assertIndexedSymCount(String whereClause, long expected) throws Exception {
         assertQuery("SELECT count() FROM t WHERE " + whereClause)
                 .noLeakCheck()
@@ -3330,6 +3344,65 @@ public class CheckpointTest extends AbstractCairoTest {
                             4
                             """);
             engine.checkpointRelease();
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreRebuildsIndexesOfParquetPartitionWhenPmRegenerated() throws Exception {
+        // The restored index files were built against the committed footer's index row map. When the restore
+        // regenerates _pm, the new footer carries the identity map, so the restore must rebuild the partition's
+        // indexes even though index rebuild is off (the checkpoint-recovery default).
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        val LONG,
+                        s1 SYMBOL INDEX,
+                        s2 SYMBOL INDEX TYPE POSTING,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t
+                    SELECT
+                        x,
+                        CASE x % 3 WHEN 0 THEN 'a' WHEN 1 THEN 'b' ELSE 'c' END,
+                        CASE x % 4 WHEN 0 THEN 'a' WHEN 1 THEN 'b' ELSE 'c' END,
+                        dateadd('h', x::INT, '2024-01-01')
+                    FROM long_sequence(12)
+                    """);
+            execute("INSERT INTO t VALUES (100, 'a', 'a', '2024-01-02T00:00:00.000000Z')");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            // Rewrites the second row group in place.
+            execute("INSERT INTO t VALUES (-1, 'b', 'c', '2024-01-01T06:30:00.000000Z')");
+
+            TableToken tableToken = engine.verifyTableName("t");
+            try (TableReader reader = engine.getReader(tableToken)) {
+                reader.openPartition(0);
+                Assert.assertTrue("the footer must carry an index row map", reader.getAndInitParquetPartitionDecoder(0).metadata().hasIndexRowMap());
+            }
+
+            String dbRoot = engine.getConfiguration().getDbRoot();
+            File partDir = findParquetPartitionDir(new File(dbRoot, tableToken.getDirName()), "2024-01-01");
+            engine.clear();
+            // Bytes past the committed size stand in for an in-place update that ran after CHECKPOINT CREATE.
+            // They make the restore regenerate _pm; the index files stay as committed.
+            try (java.io.FileOutputStream fos = new java.io.FileOutputStream(new File(partDir, "data.parquet"), true)) {
+                fos.write(new byte[4096]);
+            }
+            try (
+                    Path tablePath = new Path().of(dbRoot).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), false);
+            }
+            assertIndexLookupsMatchFullScan("s1", "s2");
+
+            // A later in-place O3 commit into the partition keeps the answers right.
+            execute("INSERT INTO t VALUES (-2, 'c', 'b', '2024-01-01T09:30:00.000000Z')");
+            assertIndexLookupsMatchFullScan("s1", "s2");
         });
     }
 

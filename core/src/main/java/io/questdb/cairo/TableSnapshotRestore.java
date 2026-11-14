@@ -1380,20 +1380,21 @@ public class TableSnapshotRestore implements QuietCloseable {
     }
 
     /**
-     * Ensures the {@code _pm} sidecar resolves a footer at the committed
-     * {@code parquetFileSize}, regenerating it from {@code data.parquet} when
-     * missing/stale/torn/zero-length. Resolving the footer runs the full-file CRC
-     * exactly once on the returned live mapping: on success {@code taskReader} is
-     * bound and resolved over it, and the caller owns the mapping and must
-     * {@code munmap} it (capture {@code taskReader.getFileSize()} before
-     * {@link ParquetMetaFileReader#clear()} resets it). The {@code data.parquet}
-     * truncation check must already have passed. An existing sidecar is trusted
-     * only when {@code onDiskSize == parquetFileSize}; a longer {@code data.parquet}
-     * (an in-place O3 rewrite captured mid-flight) forces regeneration even when
-     * the stale footer still resolves at the committed size. Takes per-task
-     * {@code path}/{@code taskReader} as it runs on parallel executor threads.
+     * Maps the restored {@code _pm} sidecar when it can be trusted: it exists,
+     * {@code data.parquet} is exactly the committed {@code parquetFileSize}, and
+     * a footer resolves at that size (the full-file CRC runs once here). On
+     * success {@code taskReader} is bound and resolved over the returned live
+     * mapping, which the caller must {@code munmap} (capture
+     * {@code taskReader.getFileSize()} before {@link ParquetMetaFileReader#clear()}
+     * resets it). Otherwise removes any existing sidecar and returns 0; the
+     * caller then regenerates it with {@link #regenerateAndMapParquetMeta}. A
+     * longer {@code data.parquet} (an in-place O3 rewrite captured mid-flight)
+     * forces regeneration even when the stale footer still resolves at the
+     * committed size. The {@code data.parquet} truncation check must already
+     * have passed. Takes per-task {@code path}/{@code taskReader} as it runs on
+     * parallel executor threads.
      */
-    private long mapResolvableParquetMeta(Path path, int partitionDirLen, long parquetFileSize, long onDiskSize, ParquetMetaFileReader taskReader) {
+    private long mapRestoredParquetMeta(Path path, int partitionDirLen, long parquetFileSize, long onDiskSize, ParquetMetaFileReader taskReader) {
         path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
         final boolean exists = ff.exists(path.$());
         // Trust an existing _pm only when data.parquet is EXACTLY the committed
@@ -1448,7 +1449,16 @@ public class TableSnapshotRestore implements QuietCloseable {
             LOG.info().$("removed stale/unresolvable _pm of restored parquet partition for regeneration [path=").$(path)
                     .$(", committed=").$(parquetFileSize).$(", onDisk=").$(onDiskSize).I$();
         }
+        return 0;
+    }
 
+    /**
+     * Regenerates the {@code _pm} sidecar from {@code data.parquet} at the
+     * committed {@code parquetFileSize} and maps it, leaving {@code taskReader}
+     * bound and resolved over the returned mapping (same ownership contract as
+     * {@link #mapRestoredParquetMeta}).
+     */
+    private long regenerateAndMapParquetMeta(Path path, int partitionDirLen, long parquetFileSize, ParquetMetaFileReader taskReader) {
         regenerateParquetMetaFile(path, partitionDirLen, parquetFileSize);
 
         path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
@@ -1633,7 +1643,8 @@ public class TableSnapshotRestore implements QuietCloseable {
      * worker amortizes their native allocation across partitions (see
      * {@link #processParquetPartitions}). Validates {@code data.parquet} against its
      * committed size (a stat, no fd), maps {@code _pm} once via {@code metaReader},
-     * validates/regenerates it, then -- when {@code rebuildIndexes} is set -- reuses
+     * validates/regenerates it, then -- when {@code rebuildIndexes} is set or the
+     * {@code _pm} was regenerated -- reuses
      * that resolved mapping to rebuild the partition's bitmap indexes. Feeding the
      * resolved reader to the decoder via
      * {@link ParquetPartitionDecoder#of(ParquetMetaFileReader, long, long, int)}
@@ -1692,11 +1703,18 @@ public class TableSnapshotRestore implements QuietCloseable {
         try {
             // Validate + (if needed) regenerate the sidecar, leaving it mapped and
             // its footer resolved. The only _pm map+CRC on this path.
-            parquetMetaAddr = mapResolvableParquetMeta(path, partitionDirLen, parquetFileSize, onDiskSize, metaReader);
+            parquetMetaAddr = mapRestoredParquetMeta(path, partitionDirLen, parquetFileSize, onDiskSize, metaReader);
+            final boolean isPmRegenerated = parquetMetaAddr == 0;
+            if (isPmRegenerated) {
+                parquetMetaAddr = regenerateAndMapParquetMeta(path, partitionDirLen, parquetFileSize, metaReader);
+            }
             parquetMetaFileSize = metaReader.getFileSize();
 
-            if (!rebuildIndexes) {
-                // Checkpoint-recovery default: validation/regeneration only.
+            // The restored index files hold index rows of the committed footer's index row map. A
+            // regenerated footer carries the identity map, so they no longer match it: rebuild them even
+            // on the checkpoint-recovery default, which otherwise only validates _pm.
+            final boolean isRebuildNeeded = rebuildIndexes || (isPmRegenerated && partitionRowCount > 0);
+            if (!isRebuildNeeded) {
                 return;
             }
 
@@ -1710,8 +1728,19 @@ public class TableSnapshotRestore implements QuietCloseable {
                 return;
             }
 
-            long parquetAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            // The checkpoint-recovery path keeps no rebuild scratch per worker; allocate it for this partition.
+            final boolean isScratchOwned = decoder == null;
+            if (isScratchOwned) {
+                rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                parquetColumns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT);
+                decoder = configuration.newParquetPartitionDecoder();
+                indexWriters = new ObjList<>();
+                columnNamesSink = new StringSink();
+                columnTops = new LongList();
+            }
+            long parquetAddr = 0;
             try {
+                parquetAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
                 // Reuse the resolved+verified reader: of(reader) shallow-copies
                 // its footer state, skipping a redundant resolveFooter + CRC.
                 decoder.of(metaReader, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
@@ -1749,7 +1778,14 @@ public class TableSnapshotRestore implements QuietCloseable {
                 // Destroy the decoder's context BEFORE munmap (its
                 // clear-then-munmap contract); the next of() re-initializes it.
                 decoder.close();
-                ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                if (parquetAddr != 0) {
+                    ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                }
+                if (isScratchOwned) {
+                    Misc.free(decoder);
+                    Misc.free(parquetColumns);
+                    Misc.free(rowGroupBuffers);
+                }
             }
         } finally {
             metaReader.clear();
