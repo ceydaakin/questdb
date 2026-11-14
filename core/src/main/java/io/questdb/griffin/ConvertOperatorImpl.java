@@ -153,7 +153,8 @@ public class ConvertOperatorImpl implements Closeable {
                     tableWriter.checkScoreboardHasReadersBeforeLastCommittedTxn()
                             || tableWriter.isCheckpointInProgress(),
                     tableWriter.getTruncateVersion(),
-                    tableWriter.getTxn()
+                    tableWriter.getTxn(),
+                    tableWriter.getTxWriter()
             );
         }
         clear();

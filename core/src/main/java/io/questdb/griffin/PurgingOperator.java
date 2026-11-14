@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.PostingIndexUtils;
@@ -147,7 +148,8 @@ public final class PurgingOperator {
             int partitionBy,
             boolean asyncOnly,
             long truncateVersion,
-            long txn
+            long txn,
+            TxReader txReader
     ) {
         int rootLen = path.size();
 
@@ -180,7 +182,14 @@ public final class PurgingOperator {
                     if (columnIndex == processColumnIndex) {
                         boolean columnPurged = !asyncOnly;
                         if (!asyncOnly) {
-                            if (partitionTimestamp != TABLE_ROOT_PARTITION) {
+                            if (partitionTimestamp != TABLE_ROOT_PARTITION && txReader.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)) {
+                                // A read-only partition, attached from a soft link, may share its files with
+                                // another table. ColumnPurgeOperator skips such partitions too.
+                                log.info().$("skipping purge of read-only partition [table=").$(tableToken)
+                                        .$(", column=").$safe(columnName)
+                                        .$(", partition=").$ts(ColumnType.getTimestampDriver(timestampType), partitionTimestamp)
+                                        .I$();
+                            } else if (partitionTimestamp != TABLE_ROOT_PARTITION) {
                                 path.trimTo(rootLen);
                                 TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
                                 int pathPartitionLen = path.size();

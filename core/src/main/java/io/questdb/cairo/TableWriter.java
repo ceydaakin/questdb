@@ -10343,7 +10343,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 partitionBy,
                 asyncOnly,
                 getTruncateVersion(),
-                getTxn()
+                getTxn(),
+                txWriter
         );
         purgingOperator.clear();
     }

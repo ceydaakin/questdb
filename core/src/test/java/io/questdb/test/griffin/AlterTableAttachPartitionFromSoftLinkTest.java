@@ -247,6 +247,36 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     }
 
     @Test
+    public void testDropIndexWithNoReaderKeepsSoftLinkedPartitionFiles() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+            final String tableName = testName.getMethodName();
+            attachPartitionFromSoftLink(tableName, "GLACIER", ignore -> {
+                        final int pathLen = path.size();
+                        assertSoftLinkedSymbolFilesExist(pathLen);
+
+                        // with no reader open, the column purge runs synchronously at commit
+                        engine.releaseAllReaders();
+                        TestUtils.unchecked(() -> execute("ALTER TABLE " + tableName + " ALTER COLUMN s DROP INDEX"));
+
+                        // the files in the read-only partition must survive the purge
+                        assertSoftLinkedSymbolFilesExist(pathLen);
+                        TestUtils.unchecked(() -> assertQuery("SELECT * FROM " + tableName + " WHERE ts in '" + readOnlyPartitionName + "' LIMIT 3")
+                                .noLeakCheck()
+                                .timestamp("ts")
+                                .returns(replaceTimestampSuffix1("""
+                                        l\ti\ts\tts
+                                        1\t1\tCPSW\t2022-10-17T00:00:17.279900Z
+                                        2\t2\tHYRX\t2022-10-17T00:00:34.559800Z
+                                        3\t3\t\t2022-10-17T00:00:51.839700Z
+                                        """, timestampTypeName)));
+                        return null;
+                    }
+            );
+        });
+    }
+
+    @Test
     public void testDropPartition() throws Exception {
         Assume.assumeFalse(Os.isWindows());
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
@@ -1464,6 +1494,18 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
         } catch (Throwable e) {
             Assert.fail("not expecting any Exception: " + e.getMessage());
         }
+    }
+
+    private void assertSoftLinkedSymbolFilesExist(int pathLen) {
+        Assert.assertTrue(ff.exists(path.trimTo(pathLen).concat("s.d").$()));
+        if (configuration.getDefaultSymbolIndexType() == IndexType.BITMAP) {
+            Assert.assertTrue(ff.exists(path.trimTo(pathLen).concat("s.k").$()));
+            Assert.assertTrue(ff.exists(path.trimTo(pathLen).concat("s.v").$()));
+        } else {
+            Assert.assertTrue(ff.exists(path.trimTo(pathLen).concat("s.pk").$()));
+            Assert.assertTrue(ff.exists(path.trimTo(pathLen).concat("s.pv.0").$()));
+        }
+        path.trimTo(pathLen);
     }
 
     private void attachPartitionFromSoftLink(String tableName, String otherLocation, Function<TableToken, Void> test) throws Exception {

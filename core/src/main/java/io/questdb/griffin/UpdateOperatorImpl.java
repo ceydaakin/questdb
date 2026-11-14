@@ -254,7 +254,8 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                             tableWriter.checkScoreboardHasReadersBeforeLastCommittedTxn()
                                     || tableWriter.isCheckpointInProgress(),
                             tableWriter.getTruncateVersion(),
-                            tableWriter.getTxn()
+                            tableWriter.getTxn(),
+                            tableWriter.getTxWriter()
                     );
                 }
 
