@@ -27,9 +27,12 @@ package io.questdb.cutlass.parquet;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.PageFrame;
@@ -62,6 +65,7 @@ import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
 import java.io.File;
@@ -186,11 +190,17 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
                 tableToken = cairoEngine.verifyTableName(exportTableName);
                 sqlExecutionContext.getSecurityContext().authorizeSelectOnAnyColumn(tableToken);
                 sourceReader = cairoEngine.getReader(tableToken);
-                if (sourceReader.getTxFile().hasCompositePartitions()) {
+                // The partition loop below copies a Parquet partition's file as is, so a file written before an
+                // ADD, DROP, RENAME or ALTER COLUMN TYPE would export the old columns. Materialize such a table
+                // through a temp table too, which the SELECT reads with the current columns.
+                final boolean isComposite = sourceReader.getTxFile().hasCompositePartitions();
+                if (isComposite || hasParquetPartitionWithStaleSchema(sourceReader)) {
                     final int sourcePartitionBy = sourceReader.getPartitionedBy();
                     sourceReader = Misc.free(sourceReader);
                     exportTableName = tempTableName(task.getCopyID());
-                    LOG.info().$("table turned composite after the export was queued, materializing [id=")
+                    LOG.info().$(isComposite
+                                    ? "table turned composite after the export was queued, materializing [id="
+                                    : "parquet partition schema differs from the table, materializing [id=")
                             .$hexPadded(task.getCopyID()).$(", table=").$(tableToken)
                             .$(", tempTable=").$(exportTableName).$(']').$();
                     createOp = materializingOp(cairoEngine, task.getTableName(), exportTableName, sourcePartitionBy);
@@ -403,6 +413,46 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
     }
 
     /**
+     * Returns true when any Parquet partition's file does not carry the reader's current columns, in order, with the
+     * same names, ids and types. A partition converted to Parquet keeps the schema it had at conversion time, and
+     * queries reconcile it with the table metadata, but a byte-for-byte copy of the file cannot.
+     */
+    private static boolean hasParquetPartitionWithStaleSchema(TableReader reader) {
+        if (!reader.hasParquetPartitions()) {
+            return false;
+        }
+        final TableReaderMetadata metadata = reader.getMetadata();
+        final int columnCount = metadata.getColumnCount();
+        for (int partitionIndex = 0, n = reader.getPartitionCount(); partitionIndex < n; partitionIndex++) {
+            if (reader.getPartitionFormatFromMetadata(partitionIndex) != PartitionFormat.PARQUET
+                    || reader.openPartition(partitionIndex) <= 0) {
+                continue;
+            }
+            final ParquetMetaFileReader parquetMeta = reader.getAndInitParquetPartitionDecoder(partitionIndex).metadata();
+            final int parquetColumnCount = parquetMeta.getColumnCount();
+            int parquetColumnIndex = 0;
+            for (int i = 0; i < columnCount; i++) {
+                final int columnType = metadata.getColumnType(i);
+                if (columnType < 0) {
+                    // dropped column
+                    continue;
+                }
+                if (parquetColumnIndex == parquetColumnCount
+                        || parquetColumnType(parquetMeta, parquetColumnIndex) != columnType
+                        || parquetMeta.getColumnId(parquetColumnIndex) != metadata.getColumnMetadata(i).getOriginalWriterIndex()
+                        || !Utf8s.equalsUtf16(metadata.getColumnName(i), parquetMeta.getColumnName(parquetColumnIndex))) {
+                    return true;
+                }
+                parquetColumnIndex++;
+            }
+            if (parquetColumnIndex != parquetColumnCount) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Builds the same create-as-select temp table operation {@link io.questdb.griffin.engine.ops.CopyExportFactory}
      * builds when it already sees a composite table at enqueue time, so both routes materialize identically -
      * including the quoting {@link CopyExportRequestTask#selectAllText} puts around the source table name.
@@ -428,6 +478,17 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
         op.setTableKind(TableUtils.TABLE_KIND_TEMP_PARQUET_EXPORT);
         op.setBatchSize(engine.getConfiguration().getParquetExportBatchSize());
         return op;
+    }
+
+    /**
+     * Returns the column type a Parquet partition's metadata records, without the designated timestamp flag that the
+     * metadata sets on the designated timestamp column and table metadata does not.
+     */
+    private static int parquetColumnType(ParquetMetaFileReader parquetMeta, int parquetColumnIndex) {
+        final int columnType = parquetMeta.getColumnType(parquetColumnIndex);
+        return ColumnType.isDesignatedTimestamp(columnType)
+                ? ColumnType.setDesignatedTimestampBit(columnType, false)
+                : columnType;
     }
 
     /**

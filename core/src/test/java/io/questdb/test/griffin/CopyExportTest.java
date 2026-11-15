@@ -1158,6 +1158,92 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyParquetPartitionAfterAddColumn() throws Exception {
+        assertMemoryLeak(() -> assertTableExportOfParquetPartitionAfterSchemaChange(
+                "ALTER TABLE p ADD COLUMN c INT",
+                """
+                        a\tb\tts\tc
+                        1\t10\t2024-01-01T00:00:00.000000Z\tnull
+                        2\t20\t2024-01-01T00:10:00.000000Z\tnull
+                        3\t30\t2024-01-01T00:20:00.000000Z\tnull
+                        """,
+                """
+                        a\tb\tts\tc
+                        4\t40\t2024-01-02T00:00:00.000000Z\tnull
+                        """
+        ));
+    }
+
+    @Test
+    public void testCopyParquetPartitionAfterAlterColumnType() throws Exception {
+        assertMemoryLeak(() -> assertTableExportOfParquetPartitionAfterSchemaChange(
+                "ALTER TABLE p ALTER COLUMN b TYPE DATE",
+                """
+                        a\tb\tts
+                        1\t1970-01-01T00:00:00.010Z\t2024-01-01T00:00:00.000000Z
+                        2\t1970-01-01T00:00:00.020Z\t2024-01-01T00:10:00.000000Z
+                        3\t1970-01-01T00:00:00.030Z\t2024-01-01T00:20:00.000000Z
+                        """,
+                """
+                        a\tb\tts
+                        4\t1970-01-01T00:00:00.040Z\t2024-01-02T00:00:00.000000Z
+                        """
+        ));
+    }
+
+    @Test
+    public void testCopyParquetPartitionAfterDropColumn() throws Exception {
+        assertMemoryLeak(() -> assertTableExportOfParquetPartitionAfterSchemaChange(
+                "ALTER TABLE p DROP COLUMN b",
+                """
+                        a\tts
+                        1\t2024-01-01T00:00:00.000000Z
+                        2\t2024-01-01T00:10:00.000000Z
+                        3\t2024-01-01T00:20:00.000000Z
+                        """,
+                """
+                        a\tts
+                        4\t2024-01-02T00:00:00.000000Z
+                        """
+        ));
+    }
+
+    @Test
+    public void testCopyParquetPartitionAfterRenameColumn() throws Exception {
+        assertMemoryLeak(() -> assertTableExportOfParquetPartitionAfterSchemaChange(
+                "ALTER TABLE p RENAME COLUMN b TO b2",
+                """
+                        a\tb2\tts
+                        1\t10\t2024-01-01T00:00:00.000000Z
+                        2\t20\t2024-01-01T00:10:00.000000Z
+                        3\t30\t2024-01-01T00:20:00.000000Z
+                        """,
+                """
+                        a\tb2\tts
+                        4\t40\t2024-01-02T00:00:00.000000Z
+                        """
+        ));
+    }
+
+    @Test
+    public void testCopyParquetPartitionWithUnchangedSchema() throws Exception {
+        // No schema change: the Parquet partition's file still matches the table, so the export keeps copying it.
+        assertMemoryLeak(() -> assertTableExportOfParquetPartitionAfterSchemaChange(
+                null,
+                """
+                        a\tb\tts
+                        1\t10\t2024-01-01T00:00:00.000000Z
+                        2\t20\t2024-01-01T00:10:00.000000Z
+                        3\t30\t2024-01-01T00:20:00.000000Z
+                        """,
+                """
+                        a\tb\tts
+                        4\t40\t2024-01-02T00:00:00.000000Z
+                        """
+        ));
+    }
+
+    @Test
     public void testCopyParquetRepartitionKeepsQuotedTableName() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE \"repart table\" (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY");
@@ -4829,6 +4915,55 @@ public class CopyExportTest extends AbstractCairoTest {
      * that text reports success over THIS table's rows. Its columns differ from {@code "src ct"}'s, so the
      * parquet comparison names the confusion rather than just failing on values.
      */
+    /**
+     * Converts the first of two partitions to Parquet, applies {@code alterSql} (if any), then exports the table with
+     * {@code COPY <table>}. Both exported files must carry the table's current columns and values, whether the
+     * partition was Parquet (its file predates the schema change) or native.
+     */
+    private void assertTableExportOfParquetPartitionAfterSchemaChange(
+            String alterSql,
+            String expectedParquetPartition,
+            String expectedNativePartition
+    ) throws Exception {
+        execute("CREATE TABLE p (a INT, b BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO p SELECT x::INT, (x * 10)::BYTE, timestamp_sequence('2024-01-01', 600_000_000) FROM long_sequence(3)");
+        execute("INSERT INTO p VALUES (4, 40, '2024-01-02')");
+        drainWalQueue();
+        execute("ALTER TABLE p CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+        drainWalQueue();
+        if (alterSql != null) {
+            execute(alterSql);
+            drainWalQueue();
+        }
+
+        CopyExportRunnable stmt = () ->
+                runAndFetchCopyExportID("COPY p TO 'schema_change' WITH FORMAT PARQUET", sqlExecutionContext);
+        CopyExportRunnable test = () -> assertEventually(() -> {
+            assertQuery("SELECT status FROM \"sys.copy_export_log\" LIMIT -1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("status\nfinished\n");
+            assertQuery("SELECT * FROM read_parquet('" + exportRoot + File.separator + "schema_change" + File.separator + "2024-01-01.parquet')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expectedParquetPartition);
+            assertQuery("SELECT * FROM read_parquet('" + exportRoot + File.separator + "schema_change" + File.separator + "2024-01-02.parquet')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expectedNativePartition);
+            if (alterSql == null) {
+                // The file still matches the table, so the export copies it rather than encoding the rows again.
+                Assert.assertEquals(-1L, java.nio.file.Files.mismatch(
+                        parquetPartitionFile("p", "2024-01-01"),
+                        java.nio.file.Path.of(exportRoot, "schema_change", "2024-01-01.parquet")
+                ));
+            }
+        });
+        testCopyExport(stmt, test);
+    }
+
     private void createDecoyTable() throws Exception {
         execute("CREATE TABLE src AS (SELECT 'decoy' s," +
                 " timestamp_sequence('2024-01-01', 1_000_000L) ts FROM long_sequence(3))" +
@@ -4860,6 +4995,15 @@ public class CopyExportTest extends AbstractCairoTest {
                     reader.getTxFile().isPartitionComposite(0));
         }
         engine.releaseAllReaders();
+    }
+
+    private java.nio.file.Path parquetPartitionFile(String tableName, String partitionName) {
+        final File tableDir = new File(configuration.getDbRoot(), engine.verifyTableName(tableName).getDirName());
+        final File[] partitionDirs = tableDir.listFiles((dir, name) -> name.startsWith(partitionName)
+                && new File(dir, name + File.separator + "data.parquet").exists());
+        Assert.assertNotNull(partitionDirs);
+        Assert.assertEquals(1, partitionDirs.length);
+        return new File(partitionDirs[0], "data.parquet").toPath();
     }
 
     private void assertParquetMatchesQuery(String query, String parquetPath) throws Exception {
