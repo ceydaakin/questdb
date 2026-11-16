@@ -184,7 +184,8 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
     private int awaitWriterEvent(long timeout) throws SqlException {
         assert eventSubSeq != null : "No sequence to wait on";
         assert correlationId > -1 : "No command id to wait for";
-        assert timeout > 0;
+        // timeout 0 (cairo.writer.alter.busy.wait.timeout=0) polls the event queue once and does not wait
+        assert timeout >= 0;
 
         final MillisecondClock clock = engine.getConfiguration().getMillisecondClock();
         final long start = clock.getTicks();
@@ -196,7 +197,7 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
             if (seq < 0) {
                 if (seq == -1) {
                     // Queue is empty, check if the execution blocked for too long.
-                    if (clock.getTicks() - start > timeout) {
+                    if (timeout == 0 || clock.getTicks() - start > timeout) {
                         queryFutureUpdateListener.reportBusyWaitExpired(tableToken, correlationId);
                         return status;
                     }

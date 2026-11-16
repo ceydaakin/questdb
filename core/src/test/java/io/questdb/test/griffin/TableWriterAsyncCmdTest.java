@@ -34,6 +34,7 @@ import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.CompiledQueryImpl;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlTimeoutException;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.mp.FanOut;
@@ -396,6 +397,31 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsyncCommandsZeroBusyWaitTimeout() throws Exception {
+        // 0 is an accepted value for the setting: the wait must poll once and time out, not trip an assertion
+        node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 0);
+        node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT, 0);
+        assertMemoryLeak(() -> {
+            execute("create table product (timestamp timestamp, a int)", sqlExecutionContext);
+            execute("insert into product values (0, 1)", sqlExecutionContext);
+
+            try (
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    TableWriter writer = getWriter("product")
+            ) {
+                assertBusyWaitTimesOut(compiler, writer, "alter table product add column b int");
+                assertBusyWaitTimesOut(compiler, writer, "update product set a = 2");
+            }
+            assertQuery("product")
+                    .expectSize()
+                    .returns("""
+                            timestamp\ta\tb
+                            1970-01-01T00:00:00.000000Z\t2\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testAsyncRenameMultipleColumns() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);
@@ -533,6 +559,20 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
      */
     private static void stopEngineAsyncWriterEventWait(CairoEngine engine, SCSequence sequence) {
         engine.getMessageBus().getTableWriterEventFanOut().remove(sequence);
+    }
+
+    private void assertBusyWaitTimesOut(SqlCompiler compiler, TableWriter writer, String sql) throws SqlException {
+        try (OperationFuture fut = compiler.compile(sql, sqlExecutionContext).execute(commandReplySequence)) {
+            Assert.assertEquals(QUERY_NO_RESPONSE, fut.getStatus());
+            try {
+                fut.await();
+                Assert.fail();
+            } catch (SqlTimeoutException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "Timeout expired on waiting for the async command execution result");
+                TestUtils.assertContains(ex.getFlyweightMessage(), "timeout=0ms]");
+            }
+            writer.tick(true);
+        }
     }
 
     private void executeNoWait(SCSequence tempSequence, CompiledQuery cc) throws SqlException {
