@@ -2303,6 +2303,69 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
      * that copy behind; once a later commit passed the txn, the next writer open finished the failed DETACH and gave
      * the partial copy the .detached name, next to the partition that is still attached.
      */
+    /**
+     * The column purge job deletes a superseded column file from the live partition directory without coordinating
+     * with the writer. When the delete landed between the DETACH's directory listing and its link of that file, the
+     * DETACH failed with DETACH_ERR_HARD_LINK, and a WAL table was suspended (questdb#8402). The hook below deletes the
+     * superseded v.d right before the DETACH links it, as the purge job does.
+     */
+    @Test
+    public void testDetachSkipsColumnFilePurgedDuringLink() throws Exception {
+        final AtomicBoolean isPurgeArmed = new AtomicBoolean();
+        final AtomicInteger purgedFiles = new AtomicInteger();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int hardLink(LPSZ src, LPSZ hardLink) {
+                if (isPurgeArmed.get() && Utf8s.containsAscii(hardLink, DETACHING_DIR_MARKER) && Utf8s.endsWithAscii(src, Files.SEPARATOR + "v.d")) {
+                    Assert.assertTrue(removeQuiet(src));
+                    purgedFiles.incrementAndGet();
+                }
+                return super.hardLink(src, hardLink);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            for (boolean isWal : new boolean[]{false, true}) {
+                final String tableName = isWal ? "tab_wal" : "tab";
+                execute("CREATE TABLE " + tableName + " (ts " + timestampType.getTypeName() + ", v LONG) TIMESTAMP(ts) PARTITION BY DAY " + (isWal ? "WAL" : "BYPASS WAL"));
+                execute("INSERT INTO " + tableName + " VALUES ('2024-01-01T00:00:00Z', 1), ('2024-01-01T01:00:00Z', 2), ('2024-01-02T00:00:00Z', 3)");
+                drainWalQueue();
+                // An open reader keeps the UPDATE from deleting the old v.d: the purge job owns it from here on
+                try (TableReader ignore = getReader(tableName)) {
+                    execute("UPDATE " + tableName + " SET v = v + 10 WHERE ts < '2024-01-02'");
+                    drainWalQueue();
+                }
+
+                isPurgeArmed.set(true);
+                purgedFiles.set(0);
+                try {
+                    execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2024-01-01'");
+                    drainWalQueue();
+                } finally {
+                    isPurgeArmed.set(false);
+                }
+                Assert.assertEquals("purged v.d during the link [wal=" + isWal + ']', 1, purgedFiles.get());
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tableName)));
+
+                assertQuery("SELECT * FROM " + tableName)
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("ts\tv\n" + (timestampType == TestTimestampType.NANO ? "2024-01-02T00:00:00.000000000Z" : "2024-01-02T00:00:00.000000Z") + "\t3\n");
+
+                renameDetachedToAttachable(tableName, "2024-01-01");
+                execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2024-01-01'");
+                drainWalQueue();
+                assertQuery("SELECT v FROM " + tableName)
+                        .expectSize()
+                        .returns("""
+                                v
+                                11
+                                12
+                                3
+                                """);
+            }
+        });
+    }
+
     @Test
     public void testDetachFailedLinkLeavesNoDetachedCopy() throws Exception {
         final AtomicInteger linksBeforeFailure = new AtomicInteger(Integer.MAX_VALUE);

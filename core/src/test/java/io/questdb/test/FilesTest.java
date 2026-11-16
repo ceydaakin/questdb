@@ -497,6 +497,76 @@ public class FilesTest {
         });
     }
 
+    /**
+     * The column purge job can delete a superseded column file from a partition directory after the recursive copy or
+     * hard link lists it and before it links or copies it (questdb#8402). The walk must skip the vanished entry and
+     * finish, while a failure on an entry that still exists must still fail the walk.
+     */
+    @Test
+    public void testCopyRecursiveAndHardLinkRecursiveWhenEntryVanishes() throws Exception {
+        assertMemoryLeak(() -> {
+            final int mkdirMode = 509;
+            final AtomicBoolean isFailingExistingEntry = new AtomicBoolean();
+            final AtomicInteger vanishedEntries = new AtomicInteger();
+            final FilesFacade ff = new TestFilesFacadeImpl() {
+                @Override
+                public int copy(LPSZ from, LPSZ to) {
+                    return isFailing(from) ? -1 : super.copy(from, to);
+                }
+
+                @Override
+                public int hardLink(LPSZ src, LPSZ hardLink) {
+                    return isFailing(src) ? -1 : super.hardLink(src, hardLink);
+                }
+
+                // Deletes "gone" just before the walk links or copies it, as the purge job does. Fails "kept"
+                // while leaving it in place when the test asks for that.
+                private boolean isFailing(LPSZ path) {
+                    if (Utf8s.endsWithAscii(path, Files.SEPARATOR + "gone")) {
+                        Assert.assertTrue(super.removeQuiet(path));
+                        vanishedEntries.incrementAndGet();
+                    }
+                    return isFailingExistingEntry.get() && Utf8s.endsWithAscii(path, Files.SEPARATOR + "kept");
+                }
+            };
+            final java.nio.file.Path root = temporaryFolder.newFolder().toPath();
+            try (Path src = new Path(); Path dst = new Path()) {
+                for (boolean isFailing : new boolean[]{false, true}) {
+                    for (boolean isHardLink : new boolean[]{false, true}) {
+                        final String suffix = "-" + isFailing + "-" + isHardLink;
+                        final java.nio.file.Path srcDir = root.resolve("src" + suffix);
+                        java.nio.file.Files.createDirectories(srcDir.resolve("subdir"));
+                        java.nio.file.Files.writeString(srcDir.resolve("gone"), "old");
+                        java.nio.file.Files.writeString(srcDir.resolve("kept"), "abc");
+                        java.nio.file.Files.writeString(srcDir.resolve("subdir").resolve("gone"), "old");
+                        java.nio.file.Files.writeString(srcDir.resolve("subdir").resolve("file2"), "de");
+                        final java.nio.file.Path dstDir = root.resolve("dst" + suffix);
+                        src.of(srcDir.toString());
+                        dst.of(dstDir.toString());
+                        isFailingExistingEntry.set(isFailing);
+                        vanishedEntries.set(0);
+                        final int rc;
+                        try {
+                            rc = isHardLink ? ff.hardLinkDirRecursive(src, dst, mkdirMode) : ff.copyRecursive(src, dst, mkdirMode);
+                        } finally {
+                            isFailingExistingEntry.set(false);
+                        }
+                        if (isFailing) {
+                            Assert.assertEquals("hardLink=" + isHardLink, -1, rc);
+                            continue;
+                        }
+                        Assert.assertEquals("hardLink=" + isHardLink, 0, rc);
+                        Assert.assertEquals("entries deleted during the walk", 2, vanishedEntries.get());
+                        Assert.assertEquals("abc", java.nio.file.Files.readString(dstDir.resolve("kept")));
+                        Assert.assertEquals("de", java.nio.file.Files.readString(dstDir.resolve("subdir").resolve("file2")));
+                        Assert.assertFalse(java.nio.file.Files.exists(dstDir.resolve("gone")));
+                        Assert.assertFalse(java.nio.file.Files.exists(dstDir.resolve("subdir").resolve("gone")));
+                    }
+                }
+            }
+        });
+    }
+
     @Test
     public void testDeatch() throws Exception {
         assertMemoryLeak(() -> {

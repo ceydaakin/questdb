@@ -740,8 +740,15 @@ public class FilesFacadeImpl implements FilesFacade {
                         // A file system that reports no entry types (XFS without ftype, some FUSE and network
                         // file systems) lists every entry as unknown: ask it whether the entry is a directory.
                         if (type == Files.DT_FILE || (type == Files.DT_UNKNOWN && !isDirOrSoftLinkDir(src.$()))) {
+                            // The column purge job deletes superseded files from a live partition directory without
+                            // coordinating with the writer, so a listed file can vanish before the walk reaches it.
+                            // Nothing needs a copy of a purged file: skip it, and the empty file a failed copy may
+                            // have created, rather than fail DETACH or FORCE REINDEX.
                             if ((res = operation.invoke(src.$(), dst.$())) < 0) {
-                                return res;
+                                if (exists(src.$())) {
+                                    return res;
+                                }
+                                removeQuiet(dst.$());
                             }
                         } else {
                             // Ignore if subfolder already exists
