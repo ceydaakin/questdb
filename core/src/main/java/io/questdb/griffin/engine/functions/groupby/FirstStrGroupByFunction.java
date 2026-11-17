@@ -41,6 +41,7 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
     protected final Function arg;
     protected final StableAwareStringHolder sink = new StableAwareStringHolder();
     protected int valueIndex;
+    private final StableAwareStringHolder sinkB = new StableAwareStringHolder();
 
     public FirstStrGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
@@ -49,6 +50,7 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
     @Override
     public void clear() {
         sink.of(0);
+        sinkB.of(0);
     }
 
     @Override
@@ -104,7 +106,12 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
 
     @Override
     public CharSequence getStrB(Record rec) {
-        return getStrA(rec);
+        final boolean nullValue = rec.getBool(valueIndex + 2);
+        if (nullValue) {
+            return null;
+        }
+        final long ptr = rec.getLong(valueIndex + 1);
+        return ptr == 0 ? null : sinkB.of(ptr);
     }
 
     @Override
@@ -154,6 +161,7 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
     @Override
     public void setAllocator(GroupByAllocator allocator) {
         sink.setAllocator(allocator);
+        sinkB.setAllocator(allocator);
     }
 
     @Override

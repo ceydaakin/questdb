@@ -43,6 +43,7 @@ public class FirstVarcharGroupByFunction extends VarcharFunction implements Grou
     protected final Function arg;
     protected final StableAwareUtf8StringHolder sink = new StableAwareUtf8StringHolder();
     protected int valueIndex;
+    private final StableAwareUtf8StringHolder sinkB = new StableAwareUtf8StringHolder();
 
     public FirstVarcharGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
@@ -51,6 +52,7 @@ public class FirstVarcharGroupByFunction extends VarcharFunction implements Grou
     @Override
     public void clear() {
         sink.of(0);
+        sinkB.of(0);
     }
 
     @Override
@@ -111,7 +113,12 @@ public class FirstVarcharGroupByFunction extends VarcharFunction implements Grou
 
     @Override
     public @Nullable Utf8Sequence getVarcharB(Record rec) {
-        return getVarcharA(rec);
+        final boolean nullValue = rec.getBool(valueIndex + 2);
+        if (nullValue) {
+            return null;
+        }
+        final long ptr = rec.getLong(valueIndex + 1);
+        return ptr == 0 ? null : sinkB.of(ptr);
     }
 
     @Override
@@ -156,6 +163,7 @@ public class FirstVarcharGroupByFunction extends VarcharFunction implements Grou
     @Override
     public void setAllocator(GroupByAllocator allocator) {
         sink.setAllocator(allocator);
+        sinkB.setAllocator(allocator);
     }
 
     @Override

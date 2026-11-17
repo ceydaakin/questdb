@@ -45,6 +45,7 @@ import org.jetbrains.annotations.Nullable;
 public class ArgMaxVarcharLongGroupByFunction extends VarcharFunction implements GroupByFunction, BinaryFunction {
     private final Function keyArg;
     private final StableAwareUtf8StringHolder sink = new StableAwareUtf8StringHolder();
+    private final StableAwareUtf8StringHolder sinkB = new StableAwareUtf8StringHolder();
     private final Function valueArg;
     private int valueIndex;
 
@@ -56,6 +57,7 @@ public class ArgMaxVarcharLongGroupByFunction extends VarcharFunction implements
     @Override
     public void clear() {
         sink.of(0);
+        sinkB.of(0);
     }
 
     @Override
@@ -132,7 +134,11 @@ public class ArgMaxVarcharLongGroupByFunction extends VarcharFunction implements
 
     @Override
     public @Nullable Utf8Sequence getVarcharB(Record rec) {
-        return getVarcharA(rec);
+        if (rec.getBool(valueIndex + 2)) {
+            return null;
+        }
+        long ptr = rec.getLong(valueIndex + 1);
+        return ptr == 0 ? null : sinkB.of(ptr);
     }
 
     @Override
@@ -180,6 +186,7 @@ public class ArgMaxVarcharLongGroupByFunction extends VarcharFunction implements
     @Override
     public void setAllocator(GroupByAllocator allocator) {
         sink.setAllocator(allocator);
+        sinkB.setAllocator(allocator);
     }
 
     @Override

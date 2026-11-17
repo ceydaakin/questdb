@@ -98,7 +98,8 @@ public class MaxStrGroupByFunction extends StrFunction implements GroupByFunctio
 
     @Override
     public CharSequence getStrB(Record rec) {
-        return getStrA(rec);
+        final long ptr = rec.getLong(valueIndex);
+        return ptr == 0 ? null : sinkB.of(ptr);
     }
 
     @Override

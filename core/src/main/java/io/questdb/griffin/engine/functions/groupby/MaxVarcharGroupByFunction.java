@@ -104,7 +104,8 @@ public final class MaxVarcharGroupByFunction extends VarcharFunction implements 
 
     @Override
     public Utf8Sequence getVarcharB(Record rec) {
-        return getVarcharA(rec);
+        final long ptr = rec.getLong(valueIndex);
+        return ptr == 0 ? null : sinkB.of(ptr);
     }
 
     @Override
