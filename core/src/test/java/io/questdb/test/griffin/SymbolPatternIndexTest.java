@@ -2026,9 +2026,9 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             FullPartitionFrameCursorFactory.setCloseObserverForTesting(factory -> partitionFactoryCloseCount[0]++);
             try {
                 assertExceptionNoLeakCheck(
-                        "SELECT * FROM t WHERE sym LIKE 'a%' LIMIT 5 + 0.3",
-                        44,
-                        "invalid type: DOUBLE"
+                        "SELECT * FROM t WHERE sym LIKE 'a%' LIMIT 'ab'",
+                        42,
+                        "invalid type: STRING"
                 );
             } finally {
                 FullPartitionFrameCursorFactory.clearCloseObserverForTesting();

@@ -252,7 +252,7 @@ public class LimitTest extends AbstractCairoTest {
 
     @Test
     public void testInvalidLoType() throws Exception {
-        assertQuery("select * from y limit 5 + 0.3")
+        assertQuery("select * from y limit 'ab'")
                 .ddl("create table y as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -273,7 +273,7 @@ public class LimitTest extends AbstractCairoTest {
                         " rnd_str(5,16,2) n" +
                         " from long_sequence(30)" +
                         ") timestamp(timestamp)")
-                .fails(24, "invalid type: DOUBLE");
+                .fails(22, "invalid type: STRING");
     }
 
     @Test
@@ -320,16 +320,16 @@ public class LimitTest extends AbstractCairoTest {
             );
             // The explicit type check is the second rejection in the same helper, now under the
             // same cleanup.
-            assertExceptionNoLeakCheck("SELECT * FROM y LIMIT 5 + 0.3", 24, "invalid type: DOUBLE");
+            assertExceptionNoLeakCheck("SELECT * FROM y LIMIT 'ab'", 22, "invalid type: STRING");
             // And it leaks the same way: indexing a folded ARRAY constant with a bind variable is
             // a runtime constant, so the parser hands it over whole rather than folding it, and its
-            // DOUBLE type passes the coercion only to be rejected here - with the DirectArray of
+            // STRING type passes the coercion only to be rejected here - with the DirectArray of
             // the ARRAY argument still attached.
             bindVariableService.setLong(0, 1L);
             assertExceptionNoLeakCheck(
-                    "SELECT * FROM y LIMIT ARRAY[1.0, 2.0][$1]",
-                    37,
-                    "invalid type: DOUBLE"
+                    "SELECT * FROM y LIMIT ARRAY[1.0, 2.0][$1]::STRING",
+                    41,
+                    "invalid type: STRING"
             );
         });
     }
@@ -390,6 +390,35 @@ public class LimitTest extends AbstractCairoTest {
 
         String query = "select * from y limit -5";
         testLimit(expected, expected2, query);
+    }
+
+    @Test
+    public void testLimitDoubleRoundsToLong() throws Exception {
+        // PostgreSQL accepts a fractional LIMIT and rounds it to a bigint, half away from zero.
+        assertMemoryLeak(() -> {
+            assertQuery("SELECT x FROM long_sequence(10) LIMIT 1.5").expectSize().returns("x\n1\n2\n");
+            assertQuery("SELECT x FROM long_sequence(10) LIMIT 2.5").expectSize().returns("x\n1\n2\n3\n");
+            assertQuery("SELECT x FROM long_sequence(10) LIMIT 1.4").expectSize().returns("x\n1\n");
+            assertQuery("SELECT x FROM long_sequence(10) LIMIT 1.5::FLOAT").expectSize().returns("x\n1\n2\n");
+            assertQuery("SELECT x FROM long_sequence(10) LIMIT -1.5").expectSize().returns("x\n9\n10\n");
+            assertQuery("SELECT x FROM long_sequence(10) LIMIT 0.6, 2.6").expectSize().returns("x\n2\n3\n");
+            // A bind variable that the SELECT list types as DOUBLE is shared with the LIMIT.
+            bindVariableService.clear();
+            bindVariableService.setDouble(0, 2.5);
+            assertQuery("SELECT x::DOUBLE + $1 y FROM long_sequence(10) LIMIT $1").expectSize().returns("y\n3.5\n4.5\n5.5\n");
+            // The rounding happens at execution, so a re-bound value takes effect.
+            bindVariableService.clear();
+            bindVariableService.setDouble(0, 1.6);
+            try (RecordCursorFactory factory = select("SELECT x FROM long_sequence(10) LIMIT $1")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursor("x\n1\n2\n", cursor, factory.getMetadata(), true);
+                }
+                bindVariableService.setDouble(0, 3.2);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursor("x\n1\n2\n3\n", cursor, factory.getMetadata(), true);
+                }
+            }
+        });
     }
 
     @Test

@@ -80,6 +80,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.bool.BooleanSubQueryFunction;
+import io.questdb.griffin.engine.functions.cast.AbstractCastToLongFunction;
 import io.questdb.griffin.engine.functions.cast.CastByteToCharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastByteToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastByteToStrFunctionFactory;
@@ -15669,8 +15670,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // coerce to a convertible type
             coerceRuntimeConstantType(limitFunc, LONG, executionContext, "LIMIT expressions must be convertible to INT", limit.position);
 
-            // also rule out string, varchar etc.
+            // PostgreSQL accepts a fractional LIMIT and rounds it to a bigint
             int limitFuncType = limitFunc.getType();
+            if (limitFuncType == DOUBLE || limitFuncType == FLOAT) {
+                final Function rounded = new RoundedLimitFunction(limitFunc);
+                limit.implemented = true;
+                if (limitFunc.isConstant()) {
+                    final long value = rounded.getLong(null);
+                    Misc.free(rounded);
+                    return LongConstant.newInstance(value);
+                }
+                return rounded;
+            }
+
+            // also rule out string, varchar etc.
             if (limitTypes.excludes(limitFuncType)) {
                 throw SqlException.$(limit.position, "invalid type: ").put(ColumnType.nameOf(limitFuncType));
             }
@@ -16181,6 +16194,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (factory != null) {
                 sink.child(factory);
             }
+        }
+    }
+
+    /**
+     * Rounds a DOUBLE or FLOAT LIMIT value to a LONG, half away from zero, as PostgreSQL rounds a
+     * numeric LIMIT. NaN and values outside the LONG range become NULL, as in a cast to LONG.
+     */
+    private static class RoundedLimitFunction extends AbstractCastToLongFunction {
+        RoundedLimitFunction(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            final double value = arg.getDouble(rec);
+            if (Numbers.isNull(value) || value >= Long.MAX_VALUE || value <= Long.MIN_VALUE) {
+                return Numbers.LONG_NULL;
+            }
+            return value < 0 ? -Math.round(-value) : Math.round(value);
         }
     }
 
