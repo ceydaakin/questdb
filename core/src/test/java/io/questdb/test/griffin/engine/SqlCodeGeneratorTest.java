@@ -537,6 +537,54 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBindVariableInSelectBesideWindowFunction() throws Exception {
+        // The unaliased bind variable names its column "$1"; the window model above it reads that column
+        // back by name, which must not turn into the bind variable again.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO base VALUES
+                        ('2026-04-01T00:00:00.000000Z', 'a', 1),
+                        ('2026-04-01T00:00:01.000000Z', 'b', 2),
+                        ('2026-04-01T00:00:02.000000Z', 'a', 3)
+                    """);
+            bindVariableService.clear();
+            bindVariableService.setInt(0, 42);
+            assertQuery("SELECT ts, sym, $1, sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS 10 PRECEDING) s FROM base")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\t$1\ts
+                            2026-04-01T00:00:00.000000Z\ta\t42\t1.0
+                            2026-04-01T00:00:01.000000Z\tb\t42\t2.0
+                            2026-04-01T00:00:02.000000Z\ta\t42\t4.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testBindVariableInSelectCreatesColumnNamedLikeBindVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO base VALUES ('2026-04-01T00:00:00.000000Z', 7)");
+            bindVariableService.clear();
+            bindVariableService.setInt(0, 42);
+            execute("CREATE TABLE t4 AS (SELECT ts, $1 FROM base) TIMESTAMP(ts) PARTITION BY DAY");
+            bindVariableService.clear();
+            assertQuery("SELECT * FROM t4")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\t$1
+                            2026-04-01T00:00:00.000000Z\t42
+                            """);
+        });
+    }
+
+    @Test
     public void testBindVariableInWhere() throws Exception {
         assertMemoryLeak(() -> {
             bindVariableService.clear();
@@ -7941,6 +7989,44 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             2\tA\tB
                             16\tA\tB
                             17\tB\tB
+                            """);
+        });
+    }
+
+    @Test
+    public void testSelectColumnNamedLikeBindVariable() throws Exception {
+        // A column may be named "$1" when quoted; every way of reading it must treat the name as a
+        // column, not as the bind variable $1 (nothing is bound here).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t5 (ts TIMESTAMP, \"$1\" INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t5 VALUES ('2026-04-01T00:00:00.000000Z', 7)");
+            execute("CREATE TABLE t6 AS (SELECT ts, \"$1\" * 2 AS \"$1\" FROM t5) TIMESTAMP(ts) PARTITION BY DAY");
+            bindVariableService.clear();
+            final String expected5 = """
+                    ts\t$1
+                    2026-04-01T00:00:00.000000Z\t7
+                    """;
+            for (String sql : new String[]{"SELECT * FROM t5", "SELECT ts, \"$1\" FROM t5", "t5"}) {
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns(expected5);
+            }
+            assertQuery("SELECT \"$1\" FROM t5")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            $1
+                            7
+                            """);
+            assertQuery("SELECT * FROM t6")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\t$1
+                            2026-04-01T00:00:00.000000Z\t14
                             """);
         });
     }

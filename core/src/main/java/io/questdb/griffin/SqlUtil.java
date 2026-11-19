@@ -2500,7 +2500,12 @@ public class SqlUtil {
     }
 
     static ExpressionNode nextLiteral(ObjectPool<ExpressionNode> pool, CharSequence token, int position) {
-        return nextExpr(pool, ExpressionNode.LITERAL, token, position);
+        final ExpressionNode node = nextExpr(pool, ExpressionNode.LITERAL, token, position);
+        // ExpressionNode.of() retypes a "$1" token as a bind variable. The callers here pass a column or
+        // table name, and a column may be named "$1" (quoted, or by an unaliased bind variable), so keep
+        // the node a literal: as a bind variable it would read $1 instead of the column.
+        node.type = ExpressionNode.LITERAL;
+        return node;
     }
 
     private static class Long256ConstantFactory implements Long256Acceptor {
