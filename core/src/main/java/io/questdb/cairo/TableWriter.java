@@ -4714,6 +4714,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (PartitionBy.isPartitioned(partitionBy)) {
                         switchPartition(txWriter.getPartitionTimestampByTimestamp(timestamp));
                     }
+                } else if (isLastPartitionAppendBlocked()) {
+                    // ATTACH or DROP PARTITION can leave a parquet or composite partition last. openLastPartition()
+                    // leaves its columns closed, so a row inside it goes through the O3 merge instead.
+                    return newRowO3(timestamp);
                 }
                 if (lastOpenPartitionIsReadOnly) {
                     masterRef--;

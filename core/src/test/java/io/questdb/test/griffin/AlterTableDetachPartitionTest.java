@@ -554,6 +554,44 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     @Test
+    public void testAttachParquetLastPartitionThenInsert() throws Exception {
+        assertAttachParquetLastPartitionThenInsert(false);
+    }
+
+    @Test
+    public void testAttachParquetLastPartitionThenInsertWal() throws Exception {
+        assertAttachParquetLastPartitionThenInsert(true);
+    }
+
+    @Test
+    public void testDropNewestPartitionLeavesParquetLastThenInsert() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (price DOUBLE, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO tab VALUES (3.0, '2024-01-03T01:00:00.000000Z'), (4.0, '2024-01-04T01:00:00.000000Z')");
+            execute("ALTER TABLE tab CONVERT PARTITION TO PARQUET LIST '2024-01-03'");
+            execute("ALTER TABLE tab DROP PARTITION LIST '2024-01-04'");
+            // in order, inside the parquet partition the DROP left last, twice: the second runs after an O3 commit
+            execute("INSERT INTO tab VALUES (3.5, '2024-01-03T02:00:00.000000Z')");
+            execute("INSERT INTO tab VALUES (3.7, '2024-01-03T03:00:00.000000Z')");
+            execute("INSERT INTO tab VALUES (5.0, '2024-01-05T03:00:00.000000Z')");
+
+            final String expected = """
+                    price\tts
+                    3.0\t2024-01-03T01:00:00.000000Z
+                    3.5\t2024-01-03T02:00:00.000000Z
+                    3.7\t2024-01-03T03:00:00.000000Z
+                    5.0\t2024-01-05T03:00:00.000000Z
+                    """;
+            assertQuery("SELECT price, ts::TIMESTAMP ts FROM tab")
+                    .noLeakCheck().expectSize().inferRandomAccess().returns(expected);
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            assertQuery("SELECT price, ts::TIMESTAMP ts FROM tab")
+                    .noLeakCheck().expectSize().inferRandomAccess().returns(expected);
+        });
+    }
+
+    @Test
     public void testAttachParquetNullRecoveryKeepsNonNullSiblingFalse() throws Exception {
         assertAttachParquetNullRecoveryKeepsNonNullSiblingFalse(true);
     }
@@ -4312,6 +4350,47 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     .collect(Collectors.toList());
             Assert.assertEquals(List.of(partitionName + configuration.getAttachPartitionSuffix()), partitionDirs);
         }
+    }
+
+    private void assertAttachParquetLastPartitionThenInsert(boolean isWal) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (price DOUBLE, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY "
+                    + (isWal ? "WAL" : "BYPASS WAL"));
+            execute("INSERT INTO tab VALUES (3.0, '2024-01-03T01:00:00.000000Z'), (4.0, '2024-01-04T01:00:00.000000Z')");
+            drainWalQueue();
+            execute("ALTER TABLE tab CONVERT PARTITION TO PARQUET LIST '2024-01-03'");
+            drainWalQueue();
+            execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-03'");
+            drainWalQueue();
+            execute("ALTER TABLE tab DROP PARTITION LIST '2024-01-04'");
+            drainWalQueue();
+            renameDetachedToAttachable("tab", "2024-01-03");
+            execute("ALTER TABLE tab ATTACH PARTITION LIST '2024-01-03'");
+            drainWalQueue();
+
+            // the attached parquet partition is the last one: the row lands inside it
+            execute("INSERT INTO tab VALUES (3.7, '2024-01-03T03:00:00.000000Z')");
+            drainWalQueue();
+            // the row opens a new partition after the parquet one
+            execute("INSERT INTO tab VALUES (5.0, '2024-01-05T03:00:00.000000Z')");
+            drainWalQueue();
+            if (isWal) {
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("tab")));
+            }
+
+            final String expected = """
+                    price\tts
+                    3.0\t2024-01-03T01:00:00.000000Z
+                    3.7\t2024-01-03T03:00:00.000000Z
+                    5.0\t2024-01-05T03:00:00.000000Z
+                    """;
+            assertQuery("SELECT price, ts::TIMESTAMP ts FROM tab")
+                    .noLeakCheck().expectSize().inferRandomAccess().returns(expected);
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            assertQuery("SELECT price, ts::TIMESTAMP ts FROM tab")
+                    .noLeakCheck().expectSize().inferRandomAccess().returns(expected);
+        });
     }
 
     private void assertAttachParquetNullRecoveryKeepsNonNullSiblingFalse(boolean hasStatistics) throws Exception {
