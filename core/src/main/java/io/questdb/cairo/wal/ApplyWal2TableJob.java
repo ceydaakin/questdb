@@ -1424,7 +1424,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         }
 
         // Hard-suspended tables (config list or ALTER TABLE ... SUSPEND WAL) are excluded from apply.
-        if (engine.isWalApplySuspended(tableToken)) {
+        // A dropped table still goes through: applyWal is the only path to purgeTableFiles, and
+        // DROP does not clear the hard-suspended flag, so skipping it here left the table's files
+        // on disk until restart, with WalPurgeJob re-pinging this job every sweep.
+        if (engine.isWalApplySuspended(tableToken) && !engine.isTableDropped(tableToken)) {
             return true;
         }
 

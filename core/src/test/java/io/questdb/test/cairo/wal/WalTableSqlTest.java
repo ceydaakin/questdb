@@ -1288,6 +1288,37 @@ public class WalTableSqlTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDroppedSuspendedMatViewFilesRemoved() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT ts, sum(x) s FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            execute("INSERT INTO base VALUES ('2026-04-01T00:00:00.000000Z', 1)");
+            drainWalAndMatViewQueues();
+
+            final TableToken viewToken = engine.verifyTableName("mv");
+            execute("ALTER MATERIALIZED VIEW mv SUSPEND WAL");
+            execute("DROP MATERIALIZED VIEW mv");
+
+            assertDirRemovedAfterPurge(viewToken);
+        });
+    }
+
+    @Test
+    public void testDroppedSuspendedTableFilesRemoved() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES ('2026-04-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+
+            final TableToken tableToken = engine.verifyTableName("t");
+            execute("ALTER TABLE t SUSPEND WAL");
+            execute("DROP TABLE t");
+
+            assertDirRemovedAfterPurge(tableToken);
+        });
+    }
+
+    @Test
     public void testDroppedTableTriggersWalCheckJob() throws Exception {
         assertMemoryLeak(ff, () -> {
             String tableName = testName.getMethodName();
@@ -2335,6 +2366,18 @@ public class WalTableSqlTest extends AbstractCairoTest {
         TableWriter.Row row = walWriter.newRow(NanosTimestampDriver.floor("2026-01-02") + i * Nanos.HOUR_NANOS);
         row.putLong(0, i);
         row.append();
+    }
+
+    private void assertDirRemovedAfterPurge(TableToken tableToken) {
+        drainWalQueue();
+        engine.releaseInactive();
+        drainPurgeJob();
+        drainWalQueue();
+        engine.releaseInactive();
+        drainPurgeJob();
+
+        final Path path = Path.PATH.get().of(configuration.getDbRoot()).concat(tableToken);
+        Assert.assertFalse(Utf8s.toString(path), Files.exists(path.$()));
     }
 
     private void checkTableFilesExist(TableToken sysTableName, String partition, String fileName, boolean value) {
