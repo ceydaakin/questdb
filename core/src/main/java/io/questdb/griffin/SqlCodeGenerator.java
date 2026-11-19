@@ -145,6 +145,7 @@ import io.questdb.griffin.engine.functions.columns.Long128Column;
 import io.questdb.griffin.engine.functions.columns.Long256Column;
 import io.questdb.griffin.engine.functions.columns.LongColumn;
 import io.questdb.griffin.engine.functions.columns.ShortColumn;
+import io.questdb.griffin.engine.functions.columns.StrArrayColumn;
 import io.questdb.griffin.engine.functions.columns.StrColumn;
 import io.questdb.griffin.engine.functions.columns.SymbolColumn;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
@@ -12574,11 +12575,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final int columnIndex = SqlUtil.getColumnIndexQuiet(baseMetadata, qc.getAst().token);
                     final TableColumnMetadata m = baseMetadata.getColumnMetadata(columnIndex);
 
-                    Function function = functionParser.parseFunction(
-                            qc.getAst(),
-                            baseMetadata,
-                            executionContext
-                    );
+                    // FunctionParser.createColumn() rejects text[]: its other consumers (element
+                    // access, GROUP BY keys) need more than the text form a record holds. Passing
+                    // the column through to the output only needs that text.
+                    Function function = ColumnType.tagOf(m.getColumnType()) == ColumnType.ARRAY_STRING
+                            ? new StrArrayColumn(columnIndex)
+                            : functionParser.parseFunction(qc.getAst(), baseMetadata, executionContext);
                     functions.extendAndSet(i, function);
 
                     if (baseMetadata.getTimestampIndex() != -1 && baseMetadata.getTimestampIndex() == columnIndex) {

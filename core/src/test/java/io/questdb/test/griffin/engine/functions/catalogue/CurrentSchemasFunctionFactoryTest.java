@@ -52,6 +52,49 @@ public class CurrentSchemasFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCurrentSchemasFuncNextToWindowFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'a', 1),
+                    ('2024-01-01T00:00:01.000000Z', 'b', 2),
+                    ('2024-01-01T00:00:02.000000Z', 'a', 3)
+                    """);
+            assertQuery("SELECT ts, sym, current_schemas(true) v, sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS 10 PRECEDING) s FROM base")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\tv\ts
+                            2024-01-01T00:00:00.000000Z\ta\t{public}\t1.0
+                            2024-01-01T00:00:01.000000Z\tb\t{public}\t2.0
+                            2024-01-01T00:00:02.000000Z\ta\t{public}\t4.0
+                            """);
+            assertQuery("SELECT ts, sym, sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS 10 PRECEDING) s, current_schemas(true) v FROM base")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\ts\tv
+                            2024-01-01T00:00:00.000000Z\ta\t1.0\t{public}
+                            2024-01-01T00:00:01.000000Z\tb\t2.0\t{public}
+                            2024-01-01T00:00:02.000000Z\ta\t4.0\t{public}
+                            """);
+            // cached window over a text[] column taken from a sub-query
+            assertQuery("SELECT ts, v, rank() OVER (ORDER BY x DESC) r FROM (SELECT ts, x, current_schemas(true) v FROM base)")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tv\tr
+                            2024-01-01T00:00:00.000000Z\t{public}\t3
+                            2024-01-01T00:00:01.000000Z\t{public}\t2
+                            2024-01-01T00:00:02.000000Z\t{public}\t1
+                            """);
+        });
+    }
+
+    @Test
     public void testPrefixedCurrentSchemasFunc() throws Exception {
         assertQuery("select x from x where pg_catalog.current_schemas(true)[1] = 'public'")
                 .ddl("create table x as (select x from long_sequence(1))")
