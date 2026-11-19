@@ -14543,7 +14543,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                         // This logging should be quite rare, we can afford info level.
                         LOG.info().$("splitting last line of the partition [table=").$(tableToken)
-                                .$(", partition=").$ts(prevPartitionTimestamp)
+                                .$(", partition=").$ts(timestampDriver, prevPartitionTimestamp)
                                 .$(", oldSize=").$(prevPartitionSize)
                                 .$(", newSize=").$(newPrevPartitionSize)
                                 .$(", splitPartition=").$ts(timestampDriver, newSplitPartitionTimestamp)

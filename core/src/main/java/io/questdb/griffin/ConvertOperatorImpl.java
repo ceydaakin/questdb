@@ -282,7 +282,7 @@ public class ConvertOperatorImpl implements Closeable {
                         || !isParquetStorageCompatible(parquetColType, existingType))) {
                     long pts = tableWriter.getPartitionTimestamp(pi);
                     LOG.info()
-                            .$("converting parquet partition to native before type change [partition=").$ts(pts)
+                            .$("converting parquet partition to native before type change [partition=").$ts(ColumnType.getTimestampDriver(tableWriter.getTimestampType()), pts)
                             .$(", column=").$safe(columnName)
                             .$(", targetType=").$(ColumnType.nameOf(newType))
                             .I$();
@@ -301,7 +301,7 @@ public class ConvertOperatorImpl implements Closeable {
                     }
                     long pts = tableWriter.getPartitionTimestamp(pi);
                     LOG.debug()
-                            .$("skipping parquet partition conversion [partition=").$ts(pts)
+                            .$("skipping parquet partition conversion [partition=").$ts(ColumnType.getTimestampDriver(tableWriter.getTimestampType()), pts)
                             .$(", column=").$safe(columnName)
                             .$(", parquetType=").$(ColumnType.nameOf(parquetColType)).$('(').$(parquetColType).$(')')
                             .$(", existingType=").$(ColumnType.nameOf(existingType)).$('(').$(existingType).$(')')
