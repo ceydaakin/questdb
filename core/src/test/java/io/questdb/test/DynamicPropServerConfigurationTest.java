@@ -84,7 +84,9 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 import org.postgresql.util.PSQLException;
 
 import java.io.File;
@@ -121,6 +123,8 @@ import static org.junit.Assert.assertFalse;
 
 public class DynamicPropServerConfigurationTest extends AbstractTest {
     private static final TestHttpClient testHttpClient = new TestHttpClient();
+    @Rule
+    public final TemporaryFolder secretsTemp = TestUtils.newSecretsFolder();
     private File serverConf;
 
     @AfterClass
@@ -567,7 +571,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     public void testHttpPasswordFromFile() throws Exception {
         assertMemoryLeak(() -> {
             // Create a secret file for HTTP password
-            Path secretFilePath = Paths.get(temp.getRoot().getAbsolutePath(), "secrets", "http_password.txt");
+            Path secretFilePath = Paths.get(secretsTemp.getRoot().getAbsolutePath(), "secrets", "http_password.txt");
             Files.createDirectories(secretFilePath.getParent());
             Files.writeString(secretFilePath, "http_secret_password");
 
@@ -726,9 +730,9 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     public void testMultiplePasswordsFromFilesSimultaneously() throws Exception {
         assertMemoryLeak(() -> {
             // Create secret files for multiple passwords
-            Path pgPasswordFile = Paths.get(temp.getRoot().getAbsolutePath(), "secrets", "pg_password.txt");
-            Path pgRoPasswordFile = Paths.get(temp.getRoot().getAbsolutePath(), "secrets", "pg_ro_password.txt");
-            Path httpPasswordFile = Paths.get(temp.getRoot().getAbsolutePath(), "secrets", "http_password.txt");
+            Path pgPasswordFile = Paths.get(secretsTemp.getRoot().getAbsolutePath(), "secrets", "pg_password.txt");
+            Path pgRoPasswordFile = Paths.get(secretsTemp.getRoot().getAbsolutePath(), "secrets", "pg_ro_password.txt");
+            Path httpPasswordFile = Paths.get(secretsTemp.getRoot().getAbsolutePath(), "secrets", "http_password.txt");
             Files.createDirectories(pgPasswordFile.getParent());
 
             Files.writeString(pgPasswordFile, "pg_secret");
@@ -976,7 +980,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     public void testPgWirePasswordFromFileReload() throws Exception {
         assertMemoryLeak(() -> {
             // Create a secret file with initial password
-            Path secretFilePath = Paths.get(temp.getRoot().getAbsolutePath(), "secrets", "pg_password.txt");
+            Path secretFilePath = Paths.get(secretsTemp.getRoot().getAbsolutePath(), "secrets", "pg_password.txt");
             Files.createDirectories(secretFilePath.getParent());
             Files.writeString(secretFilePath, "initial_secret_password");
 
@@ -1032,7 +1036,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
             }
 
             // Create a secret file (but don't use it yet)
-            Path secretFilePath = Paths.get(temp.getRoot().getAbsolutePath(), "secrets", "pg_password.txt");
+            Path secretFilePath = Paths.get(secretsTemp.getRoot().getAbsolutePath(), "secrets", "pg_password.txt");
             Files.createDirectories(secretFilePath.getParent());
             Files.writeString(secretFilePath, "file_based_password");
 
@@ -1079,7 +1083,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     public void testPgWirePasswordSwitchFromFileToConf() throws Exception {
         assertMemoryLeak(() -> {
             // Start with password from file
-            Path secretFilePath = Paths.get(temp.getRoot().getAbsolutePath(), "secrets", "pg_password.txt");
+            Path secretFilePath = Paths.get(secretsTemp.getRoot().getAbsolutePath(), "secrets", "pg_password.txt");
             Files.createDirectories(secretFilePath.getParent());
             Files.writeString(secretFilePath, "file_based_password");
 
@@ -1130,7 +1134,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     public void testPgWireReadOnlyPasswordFromFile() throws Exception {
         assertMemoryLeak(() -> {
             // Create a secret file for readonly password
-            Path secretFilePath = Paths.get(temp.getRoot().getAbsolutePath(), "secrets", "pg_ro_password.txt");
+            Path secretFilePath = Paths.get(secretsTemp.getRoot().getAbsolutePath(), "secrets", "pg_ro_password.txt");
             Files.createDirectories(secretFilePath.getParent());
             Files.writeString(secretFilePath, "readonly_secret_password");
 
@@ -1837,7 +1841,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     public void testSecretFileDeletedDuringReload() throws Exception {
         assertMemoryLeak(() -> {
             // Create a secret file with initial password
-            Path secretFilePath = Paths.get(temp.getRoot().getAbsolutePath(), "secrets", "deletable_password.txt");
+            Path secretFilePath = Paths.get(secretsTemp.getRoot().getAbsolutePath(), "secrets", "deletable_password.txt");
             Files.createDirectories(secretFilePath.getParent());
             Files.writeString(secretFilePath, "initial_password");
 
@@ -1880,7 +1884,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     public void testSecretFileEmpty() throws Exception {
         assertMemoryLeak(() -> {
             // Create an empty secret file
-            Path secretFilePath = Paths.get(temp.getRoot().getAbsolutePath(), "secrets", "empty_password.txt");
+            Path secretFilePath = Paths.get(secretsTemp.getRoot().getAbsolutePath(), "secrets", "empty_password.txt");
             Files.createDirectories(secretFilePath.getParent());
             Files.writeString(secretFilePath, "");
 
@@ -1905,7 +1909,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     public void testSecretFileInvalidUtf8() throws Exception {
         assertMemoryLeak(() -> {
             // Create a file with invalid UTF-8 bytes
-            Path secretFilePath = Paths.get(temp.getRoot().getAbsolutePath(), "secrets", "invalid_utf8.txt");
+            Path secretFilePath = Paths.get(secretsTemp.getRoot().getAbsolutePath(), "secrets", "invalid_utf8.txt");
             Files.createDirectories(secretFilePath.getParent());
             // Write invalid UTF-8: 0xFF 0xFE are not valid UTF-8 start bytes
             Files.write(secretFilePath, new byte[]{(byte) 0xFF, (byte) 0xFE, 'a', 'b', 'c'});
@@ -1930,7 +1934,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     public void testSecretFileIsDirectory() throws Exception {
         assertMemoryLeak(() -> {
             // Create a directory instead of a file
-            Path secretDirPath = Paths.get(temp.getRoot().getAbsolutePath(), "secrets", "password_dir");
+            Path secretDirPath = Paths.get(secretsTemp.getRoot().getAbsolutePath(), "secrets", "password_dir");
             Files.createDirectories(secretDirPath);
 
             // Configure pg.password.file to point to the directory
@@ -2045,7 +2049,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     public void testSecretFileTooLarge() throws Exception {
         assertMemoryLeak(() -> {
             // Create a file larger than 64KB
-            Path secretFilePath = Paths.get(temp.getRoot().getAbsolutePath(), "secrets", "large_password.txt");
+            Path secretFilePath = Paths.get(secretsTemp.getRoot().getAbsolutePath(), "secrets", "large_password.txt");
             Files.createDirectories(secretFilePath.getParent());
 
             // Write more than 64KB (65537 bytes)
@@ -2072,7 +2076,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     public void testSecretFileWhitespaceOnly() throws Exception {
         assertMemoryLeak(() -> {
             // Create a file with only whitespace
-            Path secretFilePath = Paths.get(temp.getRoot().getAbsolutePath(), "secrets", "whitespace_password.txt");
+            Path secretFilePath = Paths.get(secretsTemp.getRoot().getAbsolutePath(), "secrets", "whitespace_password.txt");
             Files.createDirectories(secretFilePath.getParent());
             Files.writeString(secretFilePath, "   \n\t  \n  ");
 
@@ -2097,7 +2101,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     public void testSecretFileWithTrailingNewline() throws Exception {
         assertMemoryLeak(() -> {
             // Create a file with password followed by newlines (common with Kubernetes secrets)
-            Path secretFilePath = Paths.get(temp.getRoot().getAbsolutePath(), "secrets", "newline_password.txt");
+            Path secretFilePath = Paths.get(secretsTemp.getRoot().getAbsolutePath(), "secrets", "newline_password.txt");
             Files.createDirectories(secretFilePath.getParent());
             Files.writeString(secretFilePath, "my_secret_password\n\n");
 
@@ -2170,7 +2174,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     public void testSecretFileRotationDoesNotNotifyStaleWatchers() throws Exception {
         assertMemoryLeak(() -> {
             // Create a secret file for pg.password
-            Path secretFilePath = Paths.get(temp.getRoot().getAbsolutePath(), "secrets", "pg_password.txt");
+            Path secretFilePath = Paths.get(secretsTemp.getRoot().getAbsolutePath(), "secrets", "pg_password.txt");
             Files.createDirectories(secretFilePath.getParent());
             Files.writeString(secretFilePath, "initial_password");
 

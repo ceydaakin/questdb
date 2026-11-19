@@ -135,6 +135,7 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.AssumptionViolatedException;
+import org.junit.rules.TemporaryFolder;
 
 import java.io.BufferedInputStream;
 import java.io.File;
@@ -2209,6 +2210,20 @@ public final class TestUtils {
                 DefaultDdlListener.INSTANCE,
                 engine
         );
+    }
+
+    /**
+     * Folder for the secret files that tests point the *_FILE / *.file settings at.
+     * PropServerConfiguration.readSecretFromFile() rejects every path under /dev/, so when the
+     * ram-disk-test-root profile in core/pom.xml puts java.io.tmpdir there (QDB_TEST_TMPDIR=/dev/shm/...),
+     * the folder goes under the build directory instead.
+     */
+    public static TemporaryFolder newSecretsFolder() {
+        final String tmpDir = System.getProperty("java.io.tmpdir");
+        if (tmpDir != null && tmpDir.startsWith("/dev/")) {
+            return new TemporaryFolder(new File("target").getAbsoluteFile());
+        }
+        return new TemporaryFolder();
     }
 
     public static void printSql(

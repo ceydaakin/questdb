@@ -57,7 +57,9 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
 import java.sql.Connection;
@@ -77,6 +79,8 @@ import static java.util.Arrays.asList;
 import static org.junit.Assert.assertTrue;
 
 public class ServerMainTest extends AbstractBootstrapTest {
+    @Rule
+    public final TemporaryFolder secretsTemp = TestUtils.newSecretsFolder();
 
     @Override
     @Before
@@ -1632,7 +1636,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
     public void testShowParametersSecretFromFileViaEnvVar() throws Exception {
         assertMemoryLeak(() -> {
             // Create a temporary file containing the secret password
-            final String secretsDir = root + Files.SEPARATOR + "secrets";
+            final String secretsDir = secretsTemp.getRoot().getAbsolutePath() + Files.SEPARATOR + "secrets";
             TestUtils.createTestPath(secretsDir);
             final String secretFilePath = secretsDir + Files.SEPARATOR + "pg_password.txt";
 
@@ -1668,7 +1672,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
     public void testShowParametersSecretFromFileViaProperty() throws Exception {
         assertMemoryLeak(() -> {
             // Create a temporary file containing the secret password
-            final String secretsDir = root + Files.SEPARATOR + "secrets";
+            final String secretsDir = secretsTemp.getRoot().getAbsolutePath() + Files.SEPARATOR + "secrets";
             TestUtils.createTestPath(secretsDir);
             final String secretFilePath = secretsDir + Files.SEPARATOR + "pg_password.txt";
 
