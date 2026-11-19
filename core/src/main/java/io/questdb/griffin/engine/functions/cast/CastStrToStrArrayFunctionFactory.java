@@ -48,6 +48,12 @@ public class CastStrToStrArrayFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return new StringToStringArrayFunction(argPositions.getQuick(0), args.getQuick(0).getStrA(null));
+        final Function arg = args.getQuick(0);
+        final int argPosition = argPositions.getQuick(0);
+        // the array is parsed once, here, so the text must be known before any row is read
+        if (!arg.isConstant() && !arg.isRuntimeConstant()) {
+            throw SqlException.$(argPosition, "constant string expected for cast to text[]");
+        }
+        return new StringToStringArrayFunction(argPosition, arg.getStrA(null));
     }
 }
