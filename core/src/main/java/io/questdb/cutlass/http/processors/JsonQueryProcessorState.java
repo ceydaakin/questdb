@@ -1232,6 +1232,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 target--;
             }
             if (target > 0) {
+                // the cursor ran out within the skip: it held exactly the rows read
+                if (countRows) {
+                    count = skip + 1 - target;
+                }
                 cursorHasRows = false;
                 return;
             }
