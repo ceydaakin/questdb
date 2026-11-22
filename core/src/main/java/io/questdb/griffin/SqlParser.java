@@ -3915,9 +3915,9 @@ public class SqlParser {
         for (int i = 0, n = columns.size(); i < n; i++) {
             QueryColumn qc = columns.getQuick(i);
             if (qc.isWindowExpression()) {
-                validateInlineWindow((WindowExpression) qc, qc.getAst());
+                validateInlineWindow((WindowExpression) qc, qc.getAst(), named);
             }
-            walkInlineWindows(qc.getAst());
+            walkInlineWindows(qc.getAst(), named);
         }
     }
 
@@ -3991,7 +3991,7 @@ public class SqlParser {
                 continue;
             }
             if (isBareUnboundedWindow(w) && vouchedFor.indexOf(w) < 0) {
-                throw bareUnboundedWindowReject(positionOfWindow(w, null));
+                throw bareUnboundedWindowReject(positionOfWindow(w, null), w, named);
             }
         }
     }
@@ -4060,7 +4060,7 @@ public class SqlParser {
             vouchedFor.add(frame);
             return;
         }
-        throw bareUnboundedWindowReject(positionOfWindow(frame, fn));
+        throw bareUnboundedWindowReject(positionOfWindow(frame, fn), window, named);
     }
 
     /**
@@ -4072,9 +4072,18 @@ public class SqlParser {
         return !window.isNonDefaultFrame() && window.getPartitionBy().size() > 0;
     }
 
-    private static SqlException bareUnboundedWindowReject(int position) {
-        return SqlException.$(position,
-                "live view unbounded window must have an ANCHOR clause; bare unbounded windows are not supported. Add an ANCHOR to bound per-partition state, e.g. ANCHOR EXPRESSION timestamp_floor('1d', ts)");
+    private static SqlException bareUnboundedWindowReject(
+            int position,
+            WindowExpression window,
+            LowerCaseCharSequenceObjHashMap<WindowExpression> named
+    ) {
+        final SqlException e = SqlException.$(position,
+                "live view unbounded window must have an ANCHOR clause; bare unbounded windows are not supported. ");
+        final CharSequence anchoredName = findAnchoredWindowName(named);
+        if (anchoredName != null) {
+            return putAnchoredWindowAdvice(e.put("A live view supports one anchored WINDOW; "), anchoredName, window);
+        }
+        return e.put("Add an ANCHOR to bound per-partition state, e.g. ANCHOR EXPRESSION timestamp_floor('1d', ts)");
     }
 
     /**
@@ -4193,12 +4202,47 @@ public class SqlParser {
                 || hasStatelessCurrentRowShape(fn, window, named)) {
             return;
         }
-        throw SqlException.$(fn.position, "live view select cannot use ")
+        final SqlException e = SqlException.$(fn.position, "live view select cannot use ")
                 .put(fn.token)
                 .put("() over a frame starting at UNBOUNDED PRECEDING; it has no finite out-of-order influence boundary, ")
                 .put("so a late row would replay the whole history. ")
-                .put("Bound the frame, e.g. ROWS BETWEEN 1000 PRECEDING AND CURRENT ROW, or add an ANCHOR to reset per segment, ")
+                .put("Bound the frame, e.g. ROWS BETWEEN 1000 PRECEDING AND CURRENT ROW, or ");
+        final CharSequence anchoredName = findAnchoredWindowName(named);
+        if (anchoredName != null) {
+            throw putAnchoredWindowAdvice(e, anchoredName, window);
+        }
+        throw e.put("add an ANCHOR to reset per segment, ")
                 .put("e.g. WINDOW w AS (PARTITION BY <key> ORDER BY <ts> ANCHOR EXPRESSION timestamp_floor('1d', <ts>))");
+    }
+
+    /**
+     * Returns the name of the view's anchored named WINDOW, or null when it declares none.
+     * {@link #validateLiveViewAnchors} lets at most one through.
+     */
+    private static CharSequence findAnchoredWindowName(LowerCaseCharSequenceObjHashMap<WindowExpression> named) {
+        final ObjList<CharSequence> keys = named.keys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            final WindowExpression w = named.get(keys.getQuick(i));
+            if (w != null && w.getAnchorKind() != WindowExpression.ANCHOR_KIND_NONE) {
+                return keys.getQuick(i);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Ends a refusal with the advice that works once the view has its anchored WINDOW:
+     * a live view supports only one, so "add an ANCHOR" leads into the
+     * at-most-one-anchored-WINDOW reject. Only a plain {@code OVER <name>} carries the
+     * ANCHOR; a window that refines the anchored one with its own frame does not.
+     */
+    private static SqlException putAnchoredWindowAdvice(SqlException e, CharSequence anchoredName, WindowExpression window) {
+        e.put("run the call over the view's anchored WINDOW ").put(anchoredName)
+                .put(" directly, e.g. OVER ").put(anchoredName);
+        if (window != null && window.hasBaseWindow() && Chars.equalsIgnoreCase(window.getBaseWindowName(), anchoredName)) {
+            e.put("; a window that refines ").put(anchoredName).put(" with its own frame does not inherit its ANCHOR");
+        }
+        return e;
     }
 
     /**
@@ -4367,10 +4411,14 @@ public class SqlParser {
         if (isAnchoredWindow(window, named)) {
             return;
         }
-        throw SqlException.$(fn.position, "live view select cannot use ")
+        final SqlException e = SqlException.$(fn.position, "live view select cannot use ")
                 .put(fn.token)
-                .put("() without an anchored WINDOW; it has no finite out-of-order influence boundary. ")
-                .put("Add an ANCHOR to reset per segment, e.g. WINDOW w AS (PARTITION BY <key> ORDER BY <ts> ANCHOR EXPRESSION timestamp_floor('1d', <ts>))");
+                .put("() without an anchored WINDOW; it has no finite out-of-order influence boundary. ");
+        final CharSequence anchoredName = findAnchoredWindowName(named);
+        if (anchoredName != null) {
+            throw putAnchoredWindowAdvice(e.put("Instead, "), anchoredName, window);
+        }
+        throw e.put("Add an ANCHOR to reset per segment, e.g. WINDOW w AS (PARTITION BY <key> ORDER BY <ts> ANCHOR EXPRESSION timestamp_floor('1d', <ts>))");
     }
 
     /**
@@ -4413,7 +4461,11 @@ public class SqlParser {
         }
     }
 
-    private static void validateInlineWindow(WindowExpression w, ExpressionNode fallback) throws SqlException {
+    private static void validateInlineWindow(
+            WindowExpression w,
+            ExpressionNode fallback,
+            LowerCaseCharSequenceObjHashMap<WindowExpression> named
+    ) throws SqlException {
         // An OVER <named-window> reference inherits all checks from the named
         // definition (already validated upstream in this method).
         if (w.isNamedWindowReference()) {
@@ -4424,7 +4476,16 @@ public class SqlParser {
         // silently never reset. Reject up front and direct the user at the
         // named-window form.
         if (w.getAnchorKind() != WindowExpression.ANCHOR_KIND_NONE) {
-            throw SqlException.$(positionOfWindow(w, fallback),
+            final int position = positionOfWindow(w, fallback);
+            final CharSequence anchoredName = findAnchoredWindowName(named);
+            if (anchoredName != null) {
+                throw putAnchoredWindowAdvice(
+                        SqlException.$(position, "ANCHOR is only supported on named WINDOW clauses, and a live view supports one anchored WINDOW; "),
+                        anchoredName,
+                        w
+                );
+            }
+            throw SqlException.$(position,
                     "ANCHOR is only supported on named WINDOW clauses; declare the window with WINDOW <name> AS (...) and reference it from the SELECT");
         }
         // The bare-unbounded reject an inline window also answers to lives in
@@ -4502,19 +4563,22 @@ public class SqlParser {
         }
     }
 
-    private static void walkInlineWindows(ExpressionNode node) throws SqlException {
+    private static void walkInlineWindows(
+            ExpressionNode node,
+            LowerCaseCharSequenceObjHashMap<WindowExpression> named
+    ) throws SqlException {
         if (node == null) {
             return;
         }
         if (node.windowExpression != null) {
-            validateInlineWindow(node.windowExpression, node);
+            validateInlineWindow(node.windowExpression, node, named);
         }
         if (node.paramCount < 3) {
-            walkInlineWindows(node.lhs);
-            walkInlineWindows(node.rhs);
+            walkInlineWindows(node.lhs, named);
+            walkInlineWindows(node.rhs, named);
         } else if (node.args != null) {
             for (int i = 0, n = node.paramCount; i < n; i++) {
-                walkInlineWindows(node.args.getQuick(i));
+                walkInlineWindows(node.args.getQuick(i), named);
             }
         }
     }
