@@ -833,7 +833,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // scalar expression and carries no ANCHOR clause of its own, so the clause
         // stays refused here exactly as it is for any other bare expression.
         parser.setAnchorAllowed(false);
-        return parser.expr(lexer, (IQueryModel) null, this);
+        final ExpressionNode node = parser.expr(lexer, (IQueryModel) null, this);
+        // The expression parser stops at the first token that cannot continue the expression.
+        // Refuse what it leaves behind: otherwise text such as `my col` would anchor on column `my`.
+        final CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok != null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
+        }
+        return node;
     }
 
     @TestOnly

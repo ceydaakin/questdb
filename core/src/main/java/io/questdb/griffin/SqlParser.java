@@ -1000,6 +1000,22 @@ public class SqlParser {
         return SqlException.$(position, "EXPIRE ROWS predicate can read only the view the policy is set on");
     }
 
+    private static boolean isAnchorLiteralQuoteNeeded(CharSequence name) {
+        if (Chars.indexOf(name, '.') != -1) {
+            return false;
+        }
+        if (SqlKeywords.isKeyword(name) || Character.isDigit(name.charAt(0))) {
+            return true;
+        }
+        for (int i = 0, n = name.length(); i < n; i++) {
+            final char c = name.charAt(i);
+            if (c != '_' && !Character.isLetterOrDigit(c)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean isJsonUnnestSupportedType(int type) {
         int tag = ColumnType.tagOf(type);
         return tag == ColumnType.BOOLEAN
@@ -3648,8 +3664,12 @@ public class SqlParser {
             if (anchorKind == WindowExpression.ANCHOR_KIND_EXPRESSION) {
                 ExpressionNode expr = w.getAnchorExpression();
                 if (expr != null) {
+                    // toSink writes a column as its bare, unquoted token, so render a copy whose
+                    // column names carry the double quotes they need to parse back as themselves.
+                    ExpressionNode rendered = ExpressionNode.deepCloneSharingQueries(expressionNodePool, windowExpressionPool, expr);
+                    quoteAnchorLiterals(rendered);
                     StringSink anchorSink = Misc.getThreadLocalSink();
-                    expr.toSink(anchorSink);
+                    rendered.toSink(anchorSink);
                     anchorExpressionSql = anchorSink.toString();
                 }
             } else if (anchorKind == WindowExpression.ANCHOR_KIND_DAILY) {
@@ -9004,6 +9024,31 @@ public class SqlParser {
         model.setSampleByOffset(isZeroOffsetToken(offsetExpr.token) ? ZERO_OFFSET : offsetExpr);
         tok = optTok(lexer);
         return tok;
+    }
+
+    /**
+     * Double-quotes every column name in a live view's ANCHOR EXPRESSION that would not parse
+     * back as itself when written bare: a SQL keyword, or a name holding a character other than
+     * a letter, digit or underscore. The lexer has already stripped the quotes the user wrote, and
+     * {@code SqlCompilerImpl.parseExpression} re-parses the rendered text at CREATE and at every
+     * refresh. A dotted name stays bare: a column name cannot hold a dot, so the dot qualifies
+     * the column with a table.
+     */
+    private void quoteAnchorLiterals(ExpressionNode node) {
+        if (node == null) {
+            return;
+        }
+        if (node.type == ExpressionNode.LITERAL && isAnchorLiteralQuoteNeeded(node.token)) {
+            // TableUtils.isValidColumnName refuses '"' in a column name, so no quote needs escaping.
+            final CharacterStoreEntry entry = characterStore.newEntry();
+            entry.put('"').put(node.token).put('"');
+            node.token = entry.toImmutable();
+        }
+        quoteAnchorLiterals(node.lhs);
+        quoteAnchorLiterals(node.rhs);
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            quoteAnchorLiterals(node.args.getQuick(i));
+        }
     }
 
     /**
