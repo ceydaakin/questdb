@@ -6761,6 +6761,15 @@ public class SqlParser {
                 windowSpec.clear();
                 expressionParser.parseWindowSpec(lexer, windowSpec, sqlParserCallback, model.getDecls());
                 rewriteWindowExpression(windowSpec);
+                // captureAnchoredWindow stores the anchor as text that is re-parsed without the
+                // DECLARE block, so substitute declared variables before that happens.
+                final ExpressionNode anchorExpr = windowSpec.getAnchorExpression();
+                if (anchorExpr != null) {
+                    windowSpec.setAnchorExpression(
+                            rewriteDeclaredVariables(anchorExpr, model.getDecls(), null),
+                            windowSpec.getAnchorPosition()
+                    );
+                }
 
                 // Validate base window reference (window inheritance):
                 // the base must be defined earlier in the same WINDOW clause (no forward references)
