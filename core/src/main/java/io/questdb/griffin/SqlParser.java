@@ -3594,23 +3594,24 @@ public class SqlParser {
         // we walk the named-window map here.
         validateLiveViewAnchors(queryModel);
 
+        // Defense-in-depth lead() reject. The factory-side check inside
+        // CairoEngine only fires when the planner picks a window factory
+        // that exposes lead - a future planner path that bypasses both
+        // CachedWindowRecordCursorFactory and WindowRecordCursorFactory
+        // would silently accept lead-only LVs. Surface it at the parser
+        // level too. Runs before the bare-unbounded and finite-influence gates
+        // so a lead() over the default frame is named for what actually
+        // disqualifies it: lead reads forward and ignores the frame entirely,
+        // so "add an ANCHOR" or "bound the frame" would be advice that cannot
+        // help.
+        rejectLeadInSelect(queryModel);
+
         // Enforce the bare-unbounded-window rule, which validateLiveViewAnchors
         // used to carry: a PARTITION-BY-keyed window over the default frame needs
         // an ANCHOR to bound its per-partition state. Resolved per window-function
         // call rather than per window definition, because the state the rule is
         // about belongs to the calls.
         rejectBareUnboundedWindows(queryModel);
-
-        // Defense-in-depth lead() reject. The factory-side check inside
-        // CairoEngine only fires when the planner picks a window factory
-        // that exposes lead - a future planner path that bypasses both
-        // CachedWindowRecordCursorFactory and WindowRecordCursorFactory
-        // would silently accept lead-only LVs. Surface it at the parser
-        // level too. Runs before the finite-influence gate so a lead() over
-        // the default frame is named for what actually disqualifies it: lead
-        // reads forward and ignores the frame entirely, so "bound the frame"
-        // would be advice that cannot help.
-        rejectLeadInSelect(queryModel);
 
         // Enforce the finite-influence scope cut: unanchored ranking functions
         // (row_number / rank / dense_rank) and unbounded frame starts have no

@@ -22081,6 +22081,37 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testRejectLeadWindowFunctionBeforeAnchorAdvice() throws Exception {
+        // lead() reads forward and ignores the frame, so an ANCHOR cannot make it
+        // acceptable: a keyed lead() over the default frame must be refused for
+        // lead() itself, not told to add an ANCHOR.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String prefix = "CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS SELECT ts, sym, ";
+            final String message = "lead() is not supported in live views; use lag() for lookback";
+            final String anchored = " WINDOW a AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))";
+            // keyed, default frame
+            assertException(prefix + "lead(x) OVER (PARTITION BY sym ORDER BY ts) AS l FROM base", prefix.length(), message);
+            // keyed, default frame, next to an anchored WINDOW
+            assertException(
+                    prefix + "lead(x) OVER (PARTITION BY sym ORDER BY ts) AS l, sum(x) OVER a AS s FROM base" + anchored,
+                    prefix.length(),
+                    message
+            );
+            // keyed, over the anchored WINDOW
+            assertException(prefix + "lead(x) OVER a AS l FROM base" + anchored, prefix.length(), message);
+            // unkeyed, default frame
+            assertException(prefix + "lead(x) OVER (ORDER BY ts) AS l FROM base", prefix.length(), message);
+            // unkeyed, default frame, next to an anchored WINDOW
+            assertException(
+                    prefix + "lead(x) OVER (ORDER BY ts) AS l, sum(x) OVER a AS s FROM base" + anchored,
+                    prefix.length(),
+                    message
+            );
+        });
+    }
+
+    @Test
     public void testRejectWindowOrderByNonTimestampColumn() throws Exception {
         // Each named WINDOW must ORDER BY the base's designated timestamp.
         assertMemoryLeak(() -> {
