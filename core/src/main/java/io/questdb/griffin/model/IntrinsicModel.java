@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
@@ -210,6 +211,11 @@ public class IntrinsicModel implements Mutable {
 
     public void of(int timestampType, int partitionBy, CairoConfiguration configuration) {
         this.runtimeIntervalBuilder.of(timestampType, partitionBy, configuration);
+    }
+
+    // Refuses a date variable in a tick string when the context is compiling a view's query.
+    public void rejectDateVariablesIn(SqlExecutionContext executionContext) {
+        runtimeIntervalBuilder.rejectDateVariablesIn(executionContext);
     }
 
     public void setBetweenBoundary(long timestamp) {

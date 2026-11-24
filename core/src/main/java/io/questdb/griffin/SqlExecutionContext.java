@@ -74,6 +74,14 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     // Deterministic-only functions are enforced e.g. when compiling a mat view.
     boolean allowNonDeterministicFunctions();
 
+    // Returns true when a tick expression may name a date variable ($now, $today, $yesterday,
+    // $tomorrow). CREATE MATERIALIZED VIEW and CREATE LIVE VIEW refuse them like now(): a view's
+    // rows must not depend on when its refresh runs. The refresh contexts allow them, so a view
+    // stored before CREATE refused them still compiles.
+    default boolean allowDateVariables() {
+        return allowNonDeterministicFunctions();
+    }
+
     default void awaitPageFrameSequences() {
     }
 

@@ -94,6 +94,12 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
         return !isPassthrough;
     }
 
+    // CREATE MATERIALIZED VIEW refuses date variables; a definition stored before it did must still compile.
+    @Override
+    public boolean allowDateVariables() {
+        return true;
+    }
+
     @Override
     public boolean allowNonDeterministicFunctions() {
         return false;

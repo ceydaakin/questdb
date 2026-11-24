@@ -107,6 +107,9 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                 Function rightFn = args.getQuick(1);
                 CharSequence right = rightFn.getStrA(null);
                 if (right != null && containsDateVariable(right)) {
+                    if (!sqlExecutionContext.allowDateVariables()) {
+                        throw SqlException.dateVariableInView(argPositions.getQuick(1), sqlExecutionContext);
+                    }
                     TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
                     CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
                             driver, configuration, right, 0, right.length(), argPositions.getQuick(1));

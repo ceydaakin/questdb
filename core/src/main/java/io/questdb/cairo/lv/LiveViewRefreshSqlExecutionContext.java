@@ -82,6 +82,12 @@ public class LiveViewRefreshSqlExecutionContext extends SqlExecutionContextImpl 
         this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
     }
 
+    // CREATE LIVE VIEW refuses date variables; a definition stored before it did must still compile.
+    @Override
+    public boolean allowDateVariables() {
+        return true;
+    }
+
     /**
      * Live-view refresh must be a deterministic function of (base table contents, view
      * definition) so every refresh cycle converges on the same result - and, under

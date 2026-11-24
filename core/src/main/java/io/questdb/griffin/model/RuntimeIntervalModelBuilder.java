@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
@@ -87,6 +88,9 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     private boolean betweenBoundarySet;
     private boolean betweenNegated;
     private CairoConfiguration configuration;
+    // Set while a view compiles its query: a date variable in a tick string is refused, see
+    // SqlExecutionContext.allowDateVariables().
+    private SqlExecutionContext dateVariableRejectContext;
     private boolean intervalApplied = false;
     private boolean isBetweenBoundaryFunctionConsumed;
     // Set by applyOffset when shifting a boundary wraps past the end of the timestamp range in
@@ -109,6 +113,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     @Override
     public void clear() {
         betweenNegated = false;
+        dateVariableRejectContext = null;
         if (isOwnershipTransferred) {
             // build() handed the dynamic functions to a RuntimeIntervalModel, which now owns them.
             // An unpaired boundary function never reached that list, so it is still ours to free.
@@ -222,6 +227,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     public void intersectIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
+        rejectDateVariable(seq, lo, lim, position);
         if (isEmptySet()) {
             return;
         }
@@ -447,6 +453,11 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
         this.partitionBy = partitionBy;
         this.configuration = configuration;
+        this.dateVariableRejectContext = null;
+    }
+
+    public void rejectDateVariablesIn(SqlExecutionContext executionContext) {
+        this.dateVariableRejectContext = executionContext.allowDateVariables() ? null : executionContext;
     }
 
     public void setBetweenBoundary(long timestamp) {
@@ -598,6 +609,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     public void subtractIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
+        rejectDateVariable(seq, lo, lim, position);
         if (isEmptySet()) {
             return;
         }
@@ -668,6 +680,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     public void unionIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
+        rejectDateVariable(seq, lo, lim, position);
         if (isEmptySet()) {
             return;
         }
@@ -973,6 +986,12 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
         lo = timestampDriver.from(lo, modelTimestampDriver.getTimestampType());
         return subtractSaturating(lo, loOffset);
+    }
+
+    private void rejectDateVariable(CharSequence seq, int lo, int lim, int position) throws SqlException {
+        if (dateVariableRejectContext != null && containsDateVariable(seq, lo, lim)) {
+            throw SqlException.dateVariableInView(position, dateVariableRejectContext);
+        }
     }
 
     /**

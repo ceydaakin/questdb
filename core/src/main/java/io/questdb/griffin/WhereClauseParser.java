@@ -346,6 +346,7 @@ public final class WhereClauseParser implements Mutable {
         IntrinsicModel model = models.next();
         int timestampType = timestampTypeOf(m, reader);
         model.of(timestampType, partitionByOf(reader), executionContext.getCairoEngine().getConfiguration());
+        model.rejectDateVariablesIn(executionContext);
         final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
         try {
 
@@ -798,6 +799,7 @@ public final class WhereClauseParser implements Mutable {
         IntrinsicModel tempModel = models.next();
         int timestampType = timestampTypeOf(m, reader);
         tempModel.of(timestampType, partitionByOf(reader), executionContext.getCairoEngine().getConfiguration());
+        tempModel.rejectDateVariablesIn(executionContext);
 
         // Process the inner predicate recursively
         final boolean isNestedAndOffset = isInsideAndOffset;

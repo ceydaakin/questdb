@@ -143,6 +143,13 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
                 .put("' has an active EXPIRE ROWS policy");
     }
 
+    // A tick expression with $now, $today, $yesterday or $tomorrow, refused while a view compiles its query.
+    public static SqlException dateVariableInView(int position, SqlExecutionContext executionContext) {
+        return position(position)
+                .put("date variable cannot be used in ")
+                .put(executionContext.isLiveViewCompile() ? "live view" : "materialized view");
+    }
+
     public static SqlException nonDeterministicColumn(int position, CharSequence column, CharSequence objectKind) {
         return position(position).put("non-deterministic function cannot be used in ").put(objectKind).put(": ").put(column);
     }
