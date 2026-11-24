@@ -471,7 +471,10 @@ public final class WhereClauseParser implements Mutable {
 
     private static boolean canCastToTimestamp(int type) {
         final int typeTag = ColumnType.tagOf(type);
-        return typeTag == ColumnType.TIMESTAMP
+        // a NULL-typed expression (e.g. CASE without ELSE) reads as a NULL timestamp,
+        // the same as the NULL keyword
+        return typeTag == ColumnType.NULL
+                || typeTag == ColumnType.TIMESTAMP
                 || typeTag == ColumnType.DATE
                 || typeTag == ColumnType.STRING
                 || typeTag == ColumnType.SYMBOL
@@ -511,6 +514,9 @@ public final class WhereClauseParser implements Mutable {
             boolean detectIntervals
     ) throws SqlException {
         int type = function.getType();
+        if (ColumnType.isNull(type)) {
+            return Numbers.LONG_NULL;
+        }
         if (ColumnType.isSymbolOrString(type)) {
             CharSequence str = function.getStrA(null);
             return str == null ? Numbers.LONG_NULL : parseStringAsTimestamp(timestampDriver, str, functionPosition, detectIntervals);
@@ -1346,10 +1352,12 @@ public final class WhereClauseParser implements Mutable {
                         } else {
                             checkFunctionCanBeTimestamp(metadata, executionContext, func, inArg.position);
                             // This is IN (TIMESTAMP) one value which is timestamp and not a STRING
-                            // This is same as equals
+                            // This is same as equals, or not equals for NOT IN
                             final Function ownedFunc = func;
                             func = null;
-                            return analyzeTimestampEqualsFunction(timestampDriver, model, in, ownedFunc, inArg.position);
+                            return isNegated
+                                    ? analyzeTimestampNotEqualsFunction(timestampDriver, model, in, ownedFunc, inArg.position)
+                                    : analyzeTimestampEqualsFunction(timestampDriver, model, in, ownedFunc, inArg.position);
                         }
                     } catch (Throwable th) {
                         Misc.free(func, th);

@@ -25,124 +25,63 @@
 package io.questdb.test.griffin.engine.functions.conditional;
 
 import io.questdb.griffin.engine.functions.conditional.NullCaseFunction;
+import io.questdb.griffin.engine.functions.constants.NullConstant;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Numbers;
+import io.questdb.std.str.StringSink;
+import org.junit.Assert;
 import org.junit.Test;
 
+/**
+ * Every branch of an all-NULL CASE is NULL, so the function reads as NULL in every type, exactly
+ * like the NULL constant. A row filter such as {@code x = CASE WHEN y > 0 THEN NULL END} reads it.
+ */
 public class NullCaseFunctionTest {
     private static final NullCaseFunction function = new NullCaseFunction(null);
+    private static final NullConstant reference = NullConstant.NULL;
 
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetArray() {
-        function.getArray(null);
+    @Test
+    public void testDecimalsMatchNullConstant() {
+        Decimal128 actual128 = new Decimal128();
+        Decimal128 expected128 = new Decimal128();
+        function.getDecimal128(null, actual128);
+        reference.getDecimal128(null, expected128);
+        Assert.assertEquals(expected128, actual128);
+
+        Decimal256 actual256 = new Decimal256();
+        Decimal256 expected256 = new Decimal256();
+        function.getDecimal256(null, actual256);
+        reference.getDecimal256(null, expected256);
+        Assert.assertEquals(expected256, actual256);
+
+        Assert.assertEquals(reference.getDecimal8(null), function.getDecimal8(null));
+        Assert.assertEquals(reference.getDecimal16(null), function.getDecimal16(null));
+        Assert.assertEquals(reference.getDecimal32(null), function.getDecimal32(null));
+        Assert.assertEquals(reference.getDecimal64(null), function.getDecimal64(null));
     }
 
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetBin() {
-        function.getBin(null);
-    }
+    @Test
+    public void testFixedSizeGettersReturnNullSentinels() {
+        Assert.assertEquals(Numbers.INT_NULL, function.getInt(null));
+        Assert.assertEquals(Numbers.LONG_NULL, function.getLong(null));
+        Assert.assertEquals(Numbers.LONG_NULL, function.getDate(null));
+        Assert.assertEquals(Numbers.LONG_NULL, function.getTimestamp(null));
+        Assert.assertTrue(Double.isNaN(function.getDouble(null)));
+        Assert.assertTrue(Float.isNaN(function.getFloat(null)));
+        Assert.assertEquals(Numbers.IPv4_NULL, function.getIPv4(null));
+        Assert.assertEquals(Numbers.LONG_NULL, function.getLong128Hi(null));
+        Assert.assertEquals(Numbers.LONG_NULL, function.getLong128Lo(null));
 
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetBinLen() {
-        function.getBinLen(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetBool() {
-        function.getBool(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetByte() {
-        function.getByte(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetChar() {
-        function.getChar(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetDate() {
-        function.getDate(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetDecimal128() {
-        function.getDecimal128(null, null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetDecimal16() {
-        function.getDecimal16(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetDecimal256() {
-        function.getDecimal256(null, null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetDecimal32() {
-        function.getDecimal32(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetDecimal64() {
-        function.getDecimal64(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetDecimal8() {
-        function.getDecimal8(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetGeoByte() {
-        function.getGeoByte(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetGeoInt() {
-        function.getGeoInt(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetGeoLong() {
-        function.getGeoLong(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetGeoShort() {
-        function.getGeoShort(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetIPv4() {
-        function.getIPv4(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetLong128Hi() {
-        function.getLong128Hi(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetLong128Lo() {
-        function.getLong128Lo(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetLong256() {
-        function.getLong256(null, null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetLong256A() {
-        function.getLong256A(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetLong256B() {
-        function.getLong256B(null);
+        Assert.assertEquals(reference.getBool(null), function.getBool(null));
+        Assert.assertEquals(reference.getByte(null), function.getByte(null));
+        Assert.assertEquals(reference.getChar(null), function.getChar(null));
+        Assert.assertEquals(reference.getShort(null), function.getShort(null));
+        Assert.assertEquals(reference.getGeoByte(null), function.getGeoByte(null));
+        Assert.assertEquals(reference.getGeoShort(null), function.getGeoShort(null));
+        Assert.assertEquals(reference.getGeoInt(null), function.getGeoInt(null));
+        Assert.assertEquals(reference.getGeoLong(null), function.getGeoLong(null));
+        Assert.assertEquals(reference.getInterval(null), function.getInterval(null));
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -150,43 +89,24 @@ public class NullCaseFunctionTest {
         function.getRecordCursorFactory();
     }
 
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetStr() {
-        function.getStrA(null);
-    }
+    @Test
+    public void testVarSizeGettersReturnNull() {
+        Assert.assertNull(function.getStrA(null));
+        Assert.assertNull(function.getStrB(null));
+        Assert.assertEquals(-1, function.getStrLen(null));
+        Assert.assertNull(function.getSymbol(null));
+        Assert.assertNull(function.getSymbolB(null));
+        Assert.assertNull(function.getVarcharA(null));
+        Assert.assertNull(function.getVarcharB(null));
+        Assert.assertEquals(-1, function.getVarcharSize(null));
+        Assert.assertNull(function.getBin(null));
+        Assert.assertEquals(-1, function.getBinLen(null));
+        Assert.assertSame(reference.getArray(null), function.getArray(null));
+        Assert.assertSame(reference.getLong256A(null), function.getLong256A(null));
+        Assert.assertSame(reference.getLong256B(null), function.getLong256B(null));
 
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetStrB() {
-        function.getStrB(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetStrLen() {
-        function.getStrLen(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetSym() {
-        function.getSymbol(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetSymbolB() {
-        function.getSymbolB(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetTimestamp() {
-        function.getTimestamp(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetVarcharA() {
-        function.getVarcharA(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetVarcharB() {
-        function.getVarcharB(null);
+        StringSink sink = new StringSink();
+        function.getLong256(null, sink);
+        Assert.assertEquals(0, sink.length());
     }
 }
