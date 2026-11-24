@@ -25,14 +25,25 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class FirstSymbolGroupByFunctionFactory implements FunctionFactory {
+
+    // An untyped NULL resolves to the SYMBOL overload (NULL prefers SYMBOL in the
+    // overload priorities), but NullConstant is not a SymbolFunction. Treat it as
+    // a NULL symbol, so first(NULL) and last(NULL) return NULL like
+    // first_not_null(NULL) does.
+    static SymbolFunction toSymbolArg(Function arg) {
+        return ColumnType.tagOf(arg.getType()) == ColumnType.NULL ? SymbolConstant.NULL : (SymbolFunction) arg;
+    }
+
     @Override
     public String getSignature() {
         return "first(K)";
@@ -45,6 +56,6 @@ public class FirstSymbolGroupByFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new FirstSymbolGroupByFunction((SymbolFunction) args.getQuick(0));
+        return new FirstSymbolGroupByFunction(toSymbolArg(args.getQuick(0)));
     }
 }

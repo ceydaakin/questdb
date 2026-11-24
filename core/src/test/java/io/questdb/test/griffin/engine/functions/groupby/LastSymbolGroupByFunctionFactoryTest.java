@@ -145,4 +145,36 @@ public class LastSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
                         FOUS\tzz9\t1970-01-04T06:00:00.000000Z
                         """);
     }
+
+    @Test
+    public void testUntypedNull() throws Exception {
+        // An untyped NULL resolves to last(K); it used to fail with a ClassCastException
+        // naming NullConstant and SymbolFunction. It now returns NULL, as
+        // last_not_null(NULL) does.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO base VALUES ('2026-04-01T00:00:00.000000Z', 'A', 1), ('2026-04-01T01:00:00.000000Z', 'B', 2)");
+            assertQuery("SELECT last(NULL) v FROM base")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            v
+                            
+                            """);
+            assertQuery("SELECT sym, last(NULL) v FROM base ORDER BY sym")
+                    .expectSize()
+                    .returns("""
+                            sym\tv
+                            A\t
+                            B\t
+                            """);
+            assertQuery("SELECT * FROM base PIVOT (last(NULL) FOR sym IN ('A', 'B'))")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            A\tB
+                            \t
+                            """);
+        });
+    }
 }
