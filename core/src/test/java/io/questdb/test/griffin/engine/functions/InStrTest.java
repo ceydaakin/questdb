@@ -264,4 +264,48 @@ public class InStrTest extends AbstractCairoTest {
                             """);
         });
     }
+
+    @Test
+    public void testNullKeyNonStringList() throws Exception {
+        // an untyped NULL key resolves to in(Sv), which used to reject non-string list elements
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES ('2026-04-01T00:00:00.000000Z', 'A', 1)");
+            drainWalQueue();
+
+            assertQuery("SELECT NULL IN (1, 2) v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\nfalse\n");
+            assertQuery("SELECT NULL NOT IN (1, 2) v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\ntrue\n");
+            assertQuery("SELECT NULL IN (1.5, 2.5) v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\nfalse\n");
+            assertQuery("SELECT NULL IN ('2026-01-01'::TIMESTAMP) v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\nfalse\n");
+
+            assertQuery("SELECT x, NULL IN (1, 2) v FROM base")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("x\tv\n1\tfalse\n");
+            assertQuery("SELECT x, NULL NOT IN (1, 2) v FROM base")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("x\tv\n1\ttrue\n");
+            assertQuery("SELECT x, NULL IN (1.5, 2.5) v FROM base")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("x\tv\n1\tfalse\n");
+            assertQuery("SELECT x, (CASE WHEN x > 0 THEN NULL END) IN (1, 2) v FROM base")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("x\tv\n1\tfalse\n");
+        });
+    }
 }

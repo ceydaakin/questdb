@@ -64,6 +64,10 @@ public class InStrFunctionFactory implements FunctionFactory {
             return BooleanConstant.FALSE;
         }
 
+        // An untyped NULL key lands here because NULL prefers STRING among the in() overloads.
+        // Its elements may then have any type: only their NULL-ness can match the key.
+        final boolean isNullKey = ColumnType.isNull(args.getQuick(0).getType());
+
         // try to append cast to STR for first argument
         args.setQuick(
                 0,
@@ -87,6 +91,14 @@ public class InStrFunctionFactory implements FunctionFactory {
                 case ColumnType.UNDEFINED:
                     break;
                 default:
+                    if (isNullKey) {
+                        // a non-NULL element casts to a non-NULL string, so it never matches the NULL key
+                        func = CaseCommon.getCastFunction(func, argPositions.getQuick(i), ColumnType.STRING, configuration, sqlExecutionContext);
+                        args.setQuick(i, func);
+                        if (ColumnType.isString(func.getType())) {
+                            break;
+                        }
+                    }
                     throw SqlException.position(argPositions.getQuick(i)).put("cannot compare STRING with type ").put(ColumnType.nameOf(func.getType()));
             }
 
