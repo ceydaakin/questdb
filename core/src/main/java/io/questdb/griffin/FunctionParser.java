@@ -871,7 +871,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             // The same guard is armed for both a materialized view and a live view
             // SELECT; name the kind actually being compiled so the reject reads right.
             final SqlException exception = SqlException.nonDeterministicColumn(
-                    node.position,
+                    requirementPosition,
                     node.token,
                     sqlExecutionContext.isLiveViewCompile() ? "live view" : "materialized view"
             );
@@ -1065,8 +1065,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             // function. Do NOT consult isNonDeterministic() here: it is a fail-safe optimizer hint that
             // defaults to true, so 97 of 114 factories would make legal SQL illegal by accident.
             if (!sqlExecutionContext.allowNonDeterministicFunctions() && function.getRecordCursorFactory().usesExternalDataSource()) {
+                // A sub-query written in a view is reported at the name of the view in the compiled SQL,
+                // see enterExecutionRequirementPosition(). Its own position points into the view's definition.
                 final SqlException exception = SqlException.nonDeterministicColumn(
-                        node.position,
+                        executionRequirementPosition > -1 ? executionRequirementPosition : node.position,
                         "sub-query",
                         sqlExecutionContext.isLiveViewCompile() ? "live view" : "materialized view"
                 );
