@@ -27,6 +27,7 @@ package io.questdb.cutlass.text;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
@@ -387,8 +388,16 @@ public class CopyExportContext {
             ex.setPosition(ex.getPosition() + tableOrSelectTextPos);
             Misc.free(createOp);
             throw ex;
-        } catch (CairoException ex) {
+        } catch (ImplicitCastException ex) {
             ex.position(tableOrSelectTextPos + ex.getPosition());
+            Misc.free(createOp);
+            throw ex;
+        } catch (CairoException ex) {
+            // Subclasses such as PoolClosedException.INSTANCE and the fiber-local EntryLockedException
+            // are shared and never reset their position, so only a plain CairoException is shifted.
+            if (ex.getClass() == CairoException.class) {
+                ex.position(tableOrSelectTextPos + ex.getPosition());
+            }
             Misc.free(createOp);
             throw ex;
         } catch (Throwable ex) {

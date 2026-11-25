@@ -35,6 +35,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriterMetrics;
+import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -674,6 +675,36 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyParquetFailsWithEntryLockedKeepsSharedExceptionPosition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x FROM long_sequence(1))");
+            // The optimiser opens the reader through getReader(token) and turns a locked entry into
+            // a SqlException; the code generator opens it again through getReader(token, version),
+            // where a lock taken in between surfaces as EntryLockedException. This context stands in
+            // for that lock.
+            try (
+                    SqlExecutionContextImpl lockingContext = new SqlExecutionContextImpl(engine, 1) {
+                        @Override
+                        public TableReader getReader(TableToken tableToken, long version) {
+                            if (tableToken.getTableName().equals("x")) {
+                                throw EntryLockedException.instance("test");
+                            }
+                            return super.getReader(tableToken, version);
+                        }
+                    }.with(AllowAllSecurityContext.INSTANCE)
+            ) {
+                // EntryLockedException is a fiber-local flyweight whose instance() does not reset
+                // its position; COPY must not shift it, or the offset accumulates across statements
+                for (int i = 0; i < 2; i++) {
+                    assertQuery("COPY (SELECT * FROM x) TO 'out' WITH FORMAT PARQUET")
+                            .withContext(lockingContext)
+                            .fails(0, "table busy [reason=test]");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCopyParquetFailsWithIllegalSql() throws Exception {
         assertQuery("copy (select x from non_existing_table) to 'tmp' with format parquet")
                 .fails(20, "table does not exist [table=non_existing_table]");
@@ -681,6 +712,13 @@ public class CopyExportTest extends AbstractCairoTest {
                 .fails(23, "found [tok='v', len=1] ',', 'from' or 'over' expected");
         assertQuery("copy (select 1) to 'tmp' with format csv")
                 .fails(37, "unsupported format, only 'parquet' is supported");
+    }
+
+    @Test
+    public void testCopyParquetFailsWithInconvertibleConstantCast() throws Exception {
+        // the cast fails at compile time; its position must map back onto the COPY statement
+        assertQuery("COPY (SELECT 12345::DECIMAL(4,2) d FROM long_sequence(1)) TO 'out1' WITH FORMAT PARQUET")
+                .fails(13, "inconvertible value: 12345 [INT -> DECIMAL(4,2)]");
     }
 
     @Test

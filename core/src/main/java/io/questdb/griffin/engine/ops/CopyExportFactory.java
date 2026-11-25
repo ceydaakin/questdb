@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RowExpiryUtil;
 import io.questdb.cairo.SecurityContext;
@@ -224,8 +225,15 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                     // compilation, so an ordinary source-name error never reaches here.
                     ex.setPosition(ex.getPosition() + tableOrSelectTextPos);
                     throw ex;
-                } catch (CairoException ex) {
+                } catch (ImplicitCastException ex) {
                     ex.position(tableOrSelectTextPos + ex.getPosition());
+                    throw ex;
+                } catch (CairoException ex) {
+                    // Subclasses such as PoolClosedException.INSTANCE and the fiber-local EntryLockedException
+                    // are shared and never reset their position, so only a plain CairoException is shifted.
+                    if (ex.getClass() == CairoException.class) {
+                        ex.position(tableOrSelectTextPos + ex.getPosition());
+                    }
                     throw ex;
                 }
             } else if (bloomFilterColumns != null && !bloomFilterColumns.isEmpty()) {
