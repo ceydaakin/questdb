@@ -27,5 +27,10 @@ package io.questdb.cairo.pool.ex;
 import io.questdb.cairo.CairoException;
 
 public class PoolClosedException extends CairoException {
-    public static final PoolClosedException INSTANCE = new PoolClosedException();
+    // A fresh instance per throw: callers such as the CREATE TABLE/VIEW catches in
+    // SqlCompilerImpl write a position into the exception they catch, and a shared
+    // instance would carry it into every later throw, on every thread.
+    public static PoolClosedException instance() {
+        return new PoolClosedException();
+    }
 }
