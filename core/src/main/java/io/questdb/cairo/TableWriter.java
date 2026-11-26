@@ -9957,7 +9957,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try {
                 final long lagAuxAddr = Math.abs(signedLagAuxAddr);
                 final long lagDataBegin = lagRows > 0 ? columnTypeDriver.getDataVectorOffset(lagAuxAddr, 0) : 0;
-                final long lagDataSize = lagRows > 0 ? columnTypeDriver.getDataVectorSizeAt(lagAuxAddr, lagRows - 1) : 0;
+                // LAG aux entries hold offsets from the start of the data file, not from the first LAG row
+                final long lagDataSize = lagRows > 0 ? columnTypeDriver.getDataVectorSizeAt(lagAuxAddr, lagRows - 1) - lagDataBegin : 0;
                 final long lagDataMapAddr = lagRows > 0 ? mapAppendColumnBuffer(lagDataMem, lagDataBegin, lagDataSize, false) : 0;
 
                 try {
@@ -10391,7 +10392,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 long lagAuxKeyAddr = Math.abs(lagAuxKeyAddrRaw);
 
                                 long lagVarDataOffset = driver.getDataVectorOffset(lagAuxKeyAddr, 0);
-                                long lagVarDataSize = driver.getDataVectorSize(lagAuxKeyAddr, 0, lagRows - 1);
+                                // getDataVectorSize() takes row 0 as the start of the data file, but LAG aux entries
+                                // start at the first LAG row, so subtract its offset from the end of the last one
+                                long lagVarDataSize = driver.getDataVectorSizeAt(lagAuxKeyAddr, lagRows - 1) - lagVarDataOffset;
                                 long lagVarDataAddrRaw = mapAppendColumnBuffer(columns.get(getPrimaryColumnIndex(i)), lagVarDataOffset, lagVarDataSize, false);
                                 // The release takes a positive O3_VAR_DATA_LEN to mean that RESERVED4 and RESERVED5 hold
                                 // the data vector mapping, so the three go into the slot together.
