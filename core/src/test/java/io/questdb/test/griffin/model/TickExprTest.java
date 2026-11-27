@@ -6250,6 +6250,31 @@ public class TickExprTest {
     }
 
     @Test
+    public void testDurationAfterFractionWithZone() throws SqlException {
+        // a date that the interval parse rejects falls back to the format parse before a duration;
+        // it must start where the same date starts without a duration, for every fraction width the
+        // timestamp unit holds
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final String[] fractions = ColumnType.isTimestampNano(timestampType.getTimestampType())
+                ? new String[]{"1", "12", "123", "1234", "12345", "123456", "1234567", "12345678", "123456789"}
+                : new String[]{"1", "12", "123", "1234", "12345", "123456"};
+        for (String fraction : fractions) {
+            for (String zone : new String[]{"Z", "+01:00"}) {
+                final String date = "2024-01-02T09:00:00." + fraction + zone;
+                out.clear();
+                parseTickExpr(timestampDriver, date, 0, date.length(), 0, out);
+                final long expectedLo = out.getQuick(0);
+                final String withDuration = date + ";1h";
+                out.clear();
+                parseTickExpr(timestampDriver, withDuration, 0, withDuration.length(), 0, out);
+                Assert.assertEquals(withDuration, 2, out.size());
+                Assert.assertEquals(withDuration, expectedLo, out.getQuick(0));
+                Assert.assertEquals(withDuration, expectedLo + timestampDriver.fromHours(1) - 1, out.getQuick(1));
+            }
+        }
+    }
+
+    @Test
     public void testElementOverMaxIntervalsAtLastLeafFails() throws SqlException {
         // The unions of a merge range wait until it grew by the merge threshold (256) since the last
         // one, and the outermost bracket of an expansion unions its range once more after its last

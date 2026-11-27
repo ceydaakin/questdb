@@ -799,6 +799,21 @@ public class MicrosTest {
     }
 
     @Test
+    public void testParseTimestampFractionWithZone() throws NumericException {
+        // every fraction width must keep all its digits, with Z and with an offset
+        final String[] fractions = {"1", "12", "123", "1234", "12345", "123456"};
+        final String[] expected = {"100000", "120000", "123000", "123400", "123450", "123456"};
+        for (int i = 0; i < fractions.length; i++) {
+            sink.clear();
+            MicrosFormatUtils.appendDateTimeUSec(sink, MicrosFormatUtils.parseTimestamp("2024-01-02T09:00:00." + fractions[i] + "Z"));
+            TestUtils.assertEquals("2024-01-02T09:00:00." + expected[i] + "Z", sink);
+            sink.clear();
+            MicrosFormatUtils.appendDateTimeUSec(sink, MicrosFormatUtils.parseTimestamp("2024-01-02T09:00:00." + fractions[i] + "+01:00"));
+            TestUtils.assertEquals("2024-01-02T08:00:00." + expected[i] + "Z", sink);
+        }
+    }
+
+    @Test
     public void testParseTimestampNotNullLocale() {
         try {
             // we deliberately mangle timezone so that function begins to rely on locale to resolve text

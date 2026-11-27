@@ -41,8 +41,8 @@ import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
 public class MicrosFormatUtils {
     public static final DateFormat DAY_FORMAT;
+    public static final DateFormat GREEDY_MICROS_UTC_FORMAT;
     public static final DateFormat GREEDY_MILLIS1_UTC_FORMAT;
-    public static final DateFormat GREEDY_MILLIS2_UTC_FORMAT;
     public static final DateFormat HOUR_FORMAT;
     public static final DateFormat MINUTE_FORMAT;
     public static final DateFormat MONTH_FORMAT;
@@ -412,7 +412,7 @@ public class MicrosFormatUtils {
                 CommonUtils.GREEDY_MILLIS1_UTC_PATTERN,        // yyyy-MM-ddTHH:mm:ss.Sz
                 CommonUtils.USEC_UTC_PATTERN,                  // yyyy-MM-ddTHH:mm:ss.SSSUUUz
                 CommonUtils.SEC_UTC_PATTERN,                   // yyyy-MM-ddTHH:mm:ssz
-                CommonUtils.GREEDY_MILLIS2_UTC_PATTERN,        // yyyy-MM-ddTHH:mm:ss.SSz
+                CommonUtils.GREEDY_MICROS_UTC_PATTERN,         // yyyy-MM-ddTHH:mm:ss.U+z
                 CommonUtils.UTC_PATTERN,                       // yyyy-MM-ddTHH:mm:ss.SSSz
                 CommonUtils.HOUR_PATTERN,                      // yyyy-MM-ddTHH
                 CommonUtils.DAY_PATTERN,                       // yyyy-MM-dd
@@ -432,7 +432,7 @@ public class MicrosFormatUtils {
         GREEDY_MILLIS1_UTC_FORMAT = dateFormats.get(CommonUtils.GREEDY_MILLIS1_UTC_PATTERN);
         USEC_UTC_FORMAT = dateFormats.get(CommonUtils.USEC_UTC_PATTERN);
         SEC_UTC_FORMAT = dateFormats.get(CommonUtils.SEC_UTC_PATTERN);
-        GREEDY_MILLIS2_UTC_FORMAT = dateFormats.get(CommonUtils.GREEDY_MILLIS2_UTC_PATTERN);
+        GREEDY_MICROS_UTC_FORMAT = dateFormats.get(CommonUtils.GREEDY_MICROS_UTC_PATTERN);
         UTC_FORMAT = dateFormats.get(CommonUtils.UTC_PATTERN);
         HOUR_FORMAT = dateFormats.get(CommonUtils.HOUR_PATTERN);
         DAY_FORMAT = dateFormats.get(CommonUtils.DAY_PATTERN);

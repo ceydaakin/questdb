@@ -747,6 +747,23 @@ public class NanosTest {
     }
 
     @Test
+    public void testParseTimestampFractionWithZone() throws NumericException {
+        // every fraction width must keep all its digits, with Z and with an offset
+        final String[] fractions = {"1", "12", "123", "1234", "12345", "123456", "1234567", "12345678", "123456789"};
+        for (String fraction : fractions) {
+            final String expected = (fraction + "000000000").substring(0, 9);
+            String text = "2024-01-02T09:00:00." + fraction + "Z";
+            sink.clear();
+            NanosFormatUtils.appendDateTimeNSec(sink, NanosFormatUtils.tryParse(text, 0, text.length()));
+            TestUtils.assertEquals("2024-01-02T09:00:00." + expected + "Z", sink);
+            text = "2024-01-02T09:00:00." + fraction + "+01:00";
+            sink.clear();
+            NanosFormatUtils.appendDateTimeNSec(sink, NanosFormatUtils.tryParse(text, 0, text.length()));
+            TestUtils.assertEquals("2024-01-02T08:00:00." + expected + "Z", sink);
+        }
+    }
+
+    @Test
     public void testParseTimestampNotNullLocale() {
         try {
             // we deliberately mangle timezone so that function begins to rely on locale to resolve text

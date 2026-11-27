@@ -394,7 +394,7 @@ public class NanosFormatUtils {
                 GREEDY_MILLIS1_UTC_PATTERN,        // yyyy-MM-ddTHH:mm:ss.Sz
                 USEC_UTC_PATTERN,                  // yyyy-MM-ddTHH:mm:ss.SSSUUUz
                 SEC_UTC_PATTERN,                   // yyyy-MM-ddTHH:mm:ssz
-                GREEDY_MILLIS2_UTC_PATTERN,        // yyyy-MM-ddTHH:mm:ss.SSz
+                GREEDY_NANOS_UTC_PATTERN,          // yyyy-MM-ddTHH:mm:ss.N+z
                 UTC_PATTERN,                       // yyyy-MM-ddTHH:mm:ss.SSSz
                 HOUR_PATTERN,                      // yyyy-MM-ddTHH
                 DAY_PATTERN,                       // yyyy-MM-dd

@@ -44,8 +44,12 @@ public class CommonUtils {
     };
     public static final int DAY_HOURS = 24;
     public static final String DAY_PATTERN = "yyyy-MM-dd";
+    // GREEDY_*_UTC_PATTERN read every digit of a fraction up to their unit, 6 or 9 digits. They replace
+    // "yyyy-MM-ddTHH:mm:ss.SSz", which compiled to a one-digit "S" followed by a greedy "S" that
+    // overwrote it, so .1234Z parsed as .234
+    public static final String GREEDY_MICROS_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.U+z";
     public static final String GREEDY_MILLIS1_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.Sz";
-    public static final String GREEDY_MILLIS2_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSz";
+    public static final String GREEDY_NANOS_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.N+z";
     public static final int HOUR_24 = 2;
     public static final int HOUR_AM = 0;
     public static final int HOUR_MINUTES = 60;
