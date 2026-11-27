@@ -33,6 +33,7 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.IndexFrameCursor;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.idx.IndexFrame;
+import io.questdb.cairo.idx.IndexFwdNullReader;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
@@ -70,6 +71,9 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
 public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFactory {
+    // Stands for every row of the null prefix. Only this frame means "all rows match": an empty
+    // frame from the index cursor always means the key has no more entries in the page frame.
+    private static final IndexFrame ALL_ROWS_FRAME = new IndexFrame();
     private static final int FILTER_KEY_IS_NULL = 0;
     private static final int FIRST_OUT_INDEX = 0;
     private static final int ITEMS_PER_OUT_ARRAY_SHIFT = 2;
@@ -374,7 +378,9 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         private IndexFrame indexFrame;
         private int indexFramePosition = -1;
         private boolean initialized;
+        private boolean isScanningNullPrefix;
         private MemoryTracker memoryTracker;
+        private long pageFrameHi = -1;
         private long prevSamplePeriodOffset = 0;
         private int rowsFound;
         private long samplePeriodIndexOffset = 0;
@@ -500,7 +506,8 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         public void toTop() {
             frameCount = 0;
             currentRow = rowsFound = 0;
-            frameNextRowId = frameLo = frameHi = -1;
+            frameNextRowId = frameLo = frameHi = pageFrameHi = -1;
+            isScanningNullPrefix = false;
             state = STATE_START;
             crossRowState = NONE;
             frameCursor.toTop();
@@ -595,30 +602,43 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                                 indexFrameRows
                         );
 
+                        if (groupBySymbolKey == FILTER_KEY_IS_NULL) {
+                            // Rows below the column top predate the symbol column: they all match
+                            // the NULL key, but the index holds no entry for them. A partition that
+                            // predates the column entirely gets the stand-in null reader, so its
+                            // whole page frame is such a prefix. Scan the prefix as a page frame of
+                            // its own, then the indexed rows above it.
+                            final long nullPrefixHi = symbolIndexReader instanceof IndexFwdNullReader
+                                    ? frameHi
+                                    : Math.min(symbolIndexReader.getColumnTop(), frameHi);
+                            if (nullPrefixHi > frameLo) {
+                                pageFrameHi = frameHi;
+                                frameHi = nullPrefixHi;
+                                isScanningNullPrefix = true;
+                            }
+                        }
                         // Fall through to STATE_FETCH_NEXT_INDEX_FRAME;
                     } else {
                         return STATE_RETURN_LAST_ROW;
                     }
 
                 case STATE_FETCH_NEXT_INDEX_FRAME:
-                    indexFrame = indexCursor.nextIndexFrame();
-                    indexFramePosition = 0;
-
-                    long indexFrameAddress = indexFrame.getAddress();
-                    if (indexFrame.getSize() == 0) {
-                        if (indexFrameAddress != 0 || groupBySymbolKey != FILTER_KEY_IS_NULL) {
+                    if (isScanningNullPrefix) {
+                        // Search code reads a frame with address 0 as "every row matches"
+                        indexFrame = ALL_ROWS_FRAME;
+                    } else {
+                        indexFrame = indexCursor.nextIndexFrame();
+                        if (indexFrame.getSize() == 0) {
                             // No rows in index for this page frame left, go to next page frame
                             frameNextRowId = frameHi;
                             // Jump back to fetch next page frame
                             return STATE_FETCH_NEXT_DATA_FRAME;
                         }
-                        // Special case - searching with `where symbol = null` on the partition where this column has not been added
-                        // Effectively all rows in page frame are the match to the symbol filter
-                        // Fall through, search code will figure that this is special case
                     }
+                    indexFramePosition = 0;
 
                     if (samplePeriodStart == Numbers.LONG_NULL) {
-                        long rowId = indexFrameAddress > 0 ? Unsafe.getLong(indexFrameAddress) : frameLo;
+                        long rowId = isScanningNullPrefix ? frameNextRowId : Unsafe.getLong(indexFrame.getAddress());
                         long offsetTimestampColumnAddress = frameMemory.getPageAddress(timestampIndex) - frameLo * Long.BYTES;
                         samplePeriodStart = Unsafe.getLong(offsetTimestampColumnAddress + rowId * Long.BYTES);
                         startFrom(samplePeriodStart);
@@ -673,9 +693,9 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                     if (frameNextRowId >= frameHi) {
                         // Page frame exhausted. Next time start from fetching new page frame
                         newState = STATE_FETCH_NEXT_DATA_FRAME;
-                    } else if (indexFramePosition >= iFrameSize) {
+                    } else if (iFrameAddress > 0 && indexFramePosition >= iFrameSize) {
                         // Index frame exhausted. Next time start from fetching new index frame
-                        newState = iFrameAddress > 0 ? STATE_FETCH_NEXT_INDEX_FRAME : STATE_FETCH_NEXT_DATA_FRAME;
+                        newState = STATE_FETCH_NEXT_INDEX_FRAME;
                     } else if (rowsFound == pageSize - 1) {
                         // output rows filled the output buffers or
                         newState = STATE_OUT_BUFFER_FULL;
@@ -686,6 +706,14 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                     } else {
                         // Page frame exhausted. Next time start from fetching new page frame
                         newState = STATE_FETCH_NEXT_DATA_FRAME;
+                    }
+
+                    if (isScanningNullPrefix && newState == STATE_FETCH_NEXT_DATA_FRAME) {
+                        // The null prefix is done, the indexed rows of the same page frame follow
+                        isScanningNullPrefix = false;
+                        frameNextRowId = frameHi;
+                        frameHi = pageFrameHi;
+                        newState = STATE_FETCH_NEXT_INDEX_FRAME;
                     }
 
                     if (rowsFound > 1) {

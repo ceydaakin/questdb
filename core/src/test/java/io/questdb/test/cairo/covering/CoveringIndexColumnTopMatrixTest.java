@@ -61,9 +61,9 @@ import org.junit.Test;
  *     <li>{@code SAMPLE BY} first/last gives up its index-backed factory for any posting
  *     index, not only where a frame cursor would actually be needed -- see
  *     {@link #testSampleByFirstLastOnPartitionCarryingTheColumn}.</li>
- *     <li>{@link #testSampleByFirstLastOverBitmapDropsNullPrefix} is a real bug, and the
- *     only case here that answers wrongly. It is pre-existing, reachable only through a
- *     BITMAP index, and pinned so the case above knows not to use one as its oracle.</li>
+ *     <li>{@link #testSampleByFirstLastOverBitmapKeepsNullPrefix} pins the BITMAP fast path
+ *     for the NULL key over a partition carrying a column top. It used to drop the rows
+ *     below the top, so the case above still uses the unindexed twin as its oracle.</li>
  * </ul>
  */
 public class CoveringIndexColumnTopMatrixTest extends AbstractCairoTest {
@@ -350,11 +350,8 @@ public class CoveringIndexColumnTopMatrixTest extends AbstractCairoTest {
         // runs the ordinary SAMPLE BY group-by, which reads the same rows through the row
         // cursor.
         // <p>
-        // The oracle is the UNINDEXED twin, not the BITMAP one. See
-        // testSampleByFirstLastOverBitmapDropsNullPrefix: the index-backed factory reads only
-        // index frames, and no index carries an entry for a row below the column top, so the
-        // bitmap fast path drops the null prefix. Comparing against it would pin that bug as
-        // if it were the right answer.
+        // The oracle is the UNINDEXED twin, not the BITMAP one, which takes the index-backed
+        // factory: see testSampleByFirstLastOverBitmapKeepsNullPrefix.
         assertMemoryLeak(() -> {
             createMatrixTable("m_sbfl_covering");
             createBaseTable("m_sbfl_posting");
@@ -381,14 +378,11 @@ public class CoveringIndexColumnTopMatrixTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSampleByFirstLastOverBitmapDropsNullPrefix() throws Exception {
-        // A SEPARATE KNOWN GAP, pre-existing and untouched, pinned here because matrix row 10
-        // has to know not to use a BITMAP index as its oracle. SampleByFirstLast reads row ids
-        // out of index frames and nothing else, and no index -- bitmap or posting -- holds an
-        // entry for a row below the indexed column's top. So the NULL key over a partition
-        // that carries a top comes back missing its null prefix, while every other plan
-        // returns those rows. Only BITMAP still reaches that factory, which is why only
-        // BITMAP still shows the loss. Fixing it turns this test red.
+    public void testSampleByFirstLastOverBitmapKeepsNullPrefix() throws Exception {
+        // No index -- bitmap or posting -- holds an entry for a row below the indexed
+        // column's top. SampleByFirstLast used to read row ids out of index frames only, so
+        // the NULL key over a partition that carries a top came back missing its null
+        // prefix. It now scans the rows below the top as matches before the index frames.
         assertMemoryLeak(() -> {
             createBaseTable("m_sbfl_bmp");
             execute("ALTER TABLE m_sbfl_bmp ALTER COLUMN sym ADD INDEX");
@@ -406,9 +400,11 @@ public class CoveringIndexColumnTopMatrixTest extends AbstractCairoTest {
                     .withPlanContaining("SampleByFirstLast")
                     .returns("""
                             ts\tsym\tfo\tlo
+                            2024-01-02T00:00:00.000000Z\t\t300.0\t300.0
+                            2024-01-02T01:00:00.000000Z\t\t400.0\t400.0
                             2024-01-02T03:00:00.000000Z\t\t600.0\t600.0
                             """);
-            // The same query with no index at all returns the two dropped rows as well.
+            // The same query with no index at all returns the same rows.
             assertQuery(sampleByFirstLastSql("m_sbfl_none", "null", "2024-01-02"))
                     .noLeakCheck()
                     .noRandomAccess()
