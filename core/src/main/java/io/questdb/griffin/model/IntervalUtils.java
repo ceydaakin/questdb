@@ -3188,7 +3188,13 @@ public final class IntervalUtils {
                         // and this block is never reached for $variable elements.
                         StringSink rewriteSink = tlDateVarSink.get();
                         rewriteSink.clear();
-                        if (hyphenCount == 1 && firstHyphenPos > resolvedElementStart) {
+                        if (hyphenCount == 1
+                                && firstHyphenPos + 1 < effectiveElementEnd
+                                && elementSeq.charAt(firstHyphenPos + 1) == 'W') {
+                            // ISO week YYYY-Www: append -[1..7], the days of the week
+                            rewriteSink.put(elementSeq, resolvedElementStart, effectiveElementEnd);
+                            rewriteSink.put("-[1..7]");
+                        } else if (hyphenCount == 1 && firstHyphenPos > resolvedElementStart) {
                             // Month-level YYYY-MM: append -[01..DD]
                             long packed = parseMonthLevelDate(elementSeq, resolvedElementStart, effectiveElementEnd);
                             if (packed < 0) {

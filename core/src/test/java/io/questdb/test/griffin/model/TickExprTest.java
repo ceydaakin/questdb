@@ -6710,6 +6710,67 @@ public class TickExprTest {
     }
 
     @Test
+    public void testIsoWeekImpreciseDateVariableList() throws SqlException {
+        // 2024-W01 is Mon Jan 1 to Sun Jan 7; $today is Jan 9
+        assertBracketIntervalWithNow(
+                "[{lo=2024-01-01T09:00:00.000000Z, hi=2024-01-01T09:00:59.999999Z}"
+                        + ",{lo=2024-01-02T09:00:00.000000Z, hi=2024-01-02T09:00:59.999999Z}"
+                        + ",{lo=2024-01-03T09:00:00.000000Z, hi=2024-01-03T09:00:59.999999Z}"
+                        + ",{lo=2024-01-04T09:00:00.000000Z, hi=2024-01-04T09:00:59.999999Z}"
+                        + ",{lo=2024-01-05T09:00:00.000000Z, hi=2024-01-05T09:00:59.999999Z}"
+                        + ",{lo=2024-01-06T09:00:00.000000Z, hi=2024-01-06T09:00:59.999999Z}"
+                        + ",{lo=2024-01-07T09:00:00.000000Z, hi=2024-01-07T09:00:59.999999Z}"
+                        + ",{lo=2024-01-09T09:00:00.000000Z, hi=2024-01-09T09:00:59.999999Z}]",
+                "[2024-W01, $today]T09:00",
+                "2024-01-09T10:00:00.000000Z"
+        );
+        // the compiled form of a literal agrees with the parser
+        assertCompiledTickExprWithNow("[2024-W01, $today]T09:00", "2024-01-09T10:00:00.000000Z");
+    }
+
+    @Test
+    public void testIsoWeekImpreciseDuration() throws SqlException {
+        // a week takes a duration per day, as a month does
+        assertImpreciseEquivalence("[2024-W01];1h", "[2024-01-[01..07]];1h");
+        assertImpreciseEquivalence("2024-W01;1h", "[2024-01-[01..07]];1h");
+        // 2020-W53 is Mon 2020-12-28 to Sun 2021-01-03
+        assertImpreciseEquivalence("[2020-W53];1h", "[2020-12-[28..31], 2021-01-[01..03]];1h");
+    }
+
+    @Test
+    public void testIsoWeekImpreciseInvalidWeek() {
+        // 2024 has 52 weeks
+        assertBracketIntervalError("2024-W53T09:00", "Invalid date");
+        assertBracketIntervalError("[2024-W53];1h", "Invalid date");
+        assertBracketIntervalError("[2024-W00]T09:00", "Invalid date");
+        assertBracketIntervalError("[2024-W1]T09:00", "Invalid date");
+    }
+
+    @Test
+    public void testIsoWeekImpreciseTime() throws SqlException {
+        assertBracketInterval(
+                "[{lo=2024-01-01T09:00:00.000000Z, hi=2024-01-01T09:00:59.999999Z}"
+                        + ",{lo=2024-01-02T09:00:00.000000Z, hi=2024-01-02T09:00:59.999999Z}"
+                        + ",{lo=2024-01-03T09:00:00.000000Z, hi=2024-01-03T09:00:59.999999Z}"
+                        + ",{lo=2024-01-04T09:00:00.000000Z, hi=2024-01-04T09:00:59.999999Z}"
+                        + ",{lo=2024-01-05T09:00:00.000000Z, hi=2024-01-05T09:00:59.999999Z}"
+                        + ",{lo=2024-01-06T09:00:00.000000Z, hi=2024-01-06T09:00:59.999999Z}"
+                        + ",{lo=2024-01-07T09:00:00.000000Z, hi=2024-01-07T09:00:59.999999Z}]",
+                "2024-W01T09:00"
+        );
+        assertImpreciseEquivalence("[2024-W01]T09:00", "[2024-01-[01..07]]T09:00");
+        assertImpreciseEquivalence("[2024-W01, 2024-W03]T09:00", "[2024-01-[01..07], 2024-01-[15..21]]T09:00");
+    }
+
+    @Test
+    public void testIsoWeekImpreciseTimeDuration() throws SqlException {
+        assertImpreciseEquivalence("2024-W01T09:00;1h", "[2024-01-[01..07]]T09:00;1h");
+        assertImpreciseEquivalence("[2024-W01]T09:00;1h", "[2024-01-[01..07]]T09:00;1h");
+        assertImpreciseEquivalence("[2024-W01]T09:00@Europe/London;1h", "[2024-01-[01..07]]T09:00@Europe/London;1h");
+        assertImpreciseEquivalence("[2024-W01]T09:00#workday;1h", "[2024-01-[01..05]]T09:00;1h");
+    }
+
+    @Test
     public void testIsoWeekInvalidDay() {
         // Day of week must be 1-7
         assertBracketIntervalError("2024-W01-0", "Invalid date");
